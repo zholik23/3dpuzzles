@@ -1,0 +1,101 @@
+#
+# spiral_test.irt
+#
+# Experiment: take Gershon Elber's PuzTile joint (puz_vol.irt) and swap the
+# straight lofted pin for a SPIRAL (helical) pin, with a small BAYONET lug at
+# the top that catches to lock the twist.
+#
+# This is a COPY for experimenting. It reuses Elber's exact pattern:
+#   - build a joint surface by lofting transformed circles with sFromCrvs
+#   - the hole is the negated, slightly-scaled joint  (-(Joint * ...))
+#   - '*' between solids is a Boolean; '-Obj' is the negative for subtraction
+#
+# What changed vs. his pin:
+#   - each circle is OFFSET from the axis (tx) and ROTATED (rz) as it rises,
+#     so the loft sweeps a HELIX instead of a straight, axis-centered pin.
+#   - an extra wider ring near the top forms a bayonet lug (the catch).
+#
+# Run in the IRIT interpreter:   irit spiral_test.irt
+# It just builds and views one male joint, one female hole, and a tile.
+#
+
+i = IritState( "RandomInit", 1960 );
+
+#############################################################################
+#
+# Spiral joint parameters (tweak these).
+#
+SpiralTurns   = 0.75;   # how many turns over the pin height (0.5-1.0 = steep)
+SpiralRadius  = 0.10;   # how far the thread sits off the axis (the helix radius)
+ThreadWidth   = 0.11;   # base circle size (the thread cross-section)
+JointHeight   = 0.60;   # total pin height
+NSteps        = 12;     # loft sections along the helix (more = smoother)
+BayonetBulge  = 1.45;   # how much the lug flares out at the catch (>1 = catch)
+
+#############################################################################
+#
+# Build the spiral joint surface by lofting circles that are pushed off-axis
+# and rotated as they climb -> a helical (spiral) pin.
+#
+SpiralJointOut = function( Turns, Radius, WCrc, Height, N, Bulge ):
+	Crc: Sections: i: t: ang: z: sclr:
+    Crc = pcircle( vector( 0, 0, 0 ), WCrc ):
+    Sections = nil():
+    for ( i = 0, 1, N,
+	t   = i / N:                       # 0 .. 1 along the pin
+	ang = 360 * Turns * t:             # twist grows as we climb
+	z   = Height * t:                  # height grows as we climb
+
+	# taper the thread a little at the very top so it seats/points in
+	sclr = 1.0:
+	if ( t > 0.85, sclr = 0.5 ):
+
+	# BAYONET: a wider ring just below the top makes a catch/lug
+	if ( t > 0.7 && t < 0.85, sclr = Bulge ):
+
+	# offset the circle off-axis (tx Radius) then rotate it about Z (rz ang)
+	# -> the lofted surface follows a helix of radius Radius.
+	snoc( Crc * sc( sclr ) * tx( Radius ) * rz( ang ) * tz( z ),
+	      Sections ) ):
+
+    return = sFromCrvs( Sections, 3, kv_open );
+
+#############################################################################
+#
+# One tile (box) with a spiral HOLE cut on its -X face, and a spiral PIN on
+# its +X face -- mirroring Elber's XMinHole / XMaxPin idea for one axis.
+#
+Crc = pcircle( vector( 0, 0, 0 ), 0.2 );
+
+Tile = MaxEdgeLen( triangl( box( vector( 0, 0, 0 ), 0.99, 0.99, 0.99 ), true ),
+		   0.2 );
+
+JointOut = SpiralJointOut( SpiralTurns, SpiralRadius, ThreadWidth,
+			   JointHeight, NSteps, BayonetBulge );
+
+# the female hole = same spiral, scaled up a touch for clearance, negated.
+JointIn  = -( JointOut * sxy( 1.06 ) * sz( 1.05 ) );
+
+# cut the hole into the -X face (same transform style as Elber's file)
+Tile = Tile * ( JointIn * ry( 90 ) * txyz( 0.0, 0.5, 0.5 ) );
+attrib( Tile, "rgb", "80, 160, 220" );
+
+# build the male pin as its own solid (like his TilePin), on the +X face
+TilePin = ( JointOut * txyz( 0.5, 0.5, 1.0 ) - Tile ) * txyz( -0.5, -0.5, -1.0 );
+TilePin = TilePin * ry( 90 ) * txyz( 1.0, 0.5, 0.5 );
+attrib( TilePin, "rgb", "250, 180, 0" );
+
+#############################################################################
+#
+# View: the spiral pin alone (to inspect the thread + bayonet), then the tile.
+#
+view( list( axes, JointOut ), 1 );
+pause();
+
+view( list( axes, Tile, TilePin ), 1 );
+
+# Uncomment to save for import into your app / slicer:
+# save( "spiral_pin",  JointOut );
+# save( "spiral_tile", list( Tile, TilePin ) );
+
+fnfree( "SpiralJointOut" );

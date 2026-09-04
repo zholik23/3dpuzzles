@@ -66,7 +66,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\irit\irit\inc_irit;C:\irit\irit\triv_lib;C:\irit\irit;C:\irit\irit\symb_lib;C:\irit\irit\cagd_lib;C:\irit\irit\prsr_lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildProjectDirectory);C:\irit\irit\inc_irit;C:\irit\irit\triv_lib;C:\irit\irit;C:\irit\irit\symb_lib;C:\irit\irit\cagd_lib;C:\irit\irit\prsr_lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>__WINNT__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
@@ -77,7 +77,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>C:\irit\irit\inc_irit;C:\irit\irit\triv_lib;C:\irit\irit;C:\irit\irit\symb_lib;C:\irit\irit\cagd_lib;C:\irit\irit\prsr_lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildProjectDirectory);C:\irit\irit\inc_irit;C:\irit\irit\triv_lib;C:\irit\irit;C:\irit\irit\symb_lib;C:\irit\irit\cagd_lib;C:\irit\irit\prsr_lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>__WINNT__;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
@@ -116,35 +116,40 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="clipper\Clipper2-main\CPP\Clipper2Lib\src\clipper.engine.cpp" />
-    <ClCompile Include="clipper\Clipper2-main\CPP\Clipper2Lib\src\clipper.offset.cpp" />
-    <ClCompile Include="clipper\Clipper2-main\CPP\Clipper2Lib\src\clipper.rectclip.cpp" />
-    <ClCompile Include="clipper\Clipper2-main\CPP\Clipper2Lib\src\clipper.triangulation.cpp" />
     <ClCompile Include="AppController.cpp" />
+    <ClCompile Include="AssemblyDivider\AssemblyDivider.cpp" />
+    <ClCompile Include="AssemblyPlanner.cpp" />
     <ClCompile Include="CadLoader.cpp" />
     <ClCompile Include="CutWarp.cpp" />
     <ClCompile Include="IritGuard.cpp" />
+    <ClCompile Include="IritJoint.cpp" />
     <ClCompile Include="IritMesh.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="MeshData.cpp" />
     <ClCompile Include="MeshDivider.cpp" />
+    <ClCompile Include="MeshView.cpp" />
+    <ClCompile Include="PlannerBlocking.cpp" />
+    <ClCompile Include="PlannerGraph.cpp" />
+    <ClCompile Include="PlannerJoints.cpp" />
+    <ClCompile Include="PlannerOrder.cpp" />
     <ClCompile Include="PuzzleDivider.cpp" />
     <ClCompile Include="Trivariate.cpp" />
-    <ClCompile Include="MeshData.cpp" />
-    <ClCompile Include="MeshView.cpp" />
-    <ClCompile Include="main.cpp">
-      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
-      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
-      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
-      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
-    </ClCompile>
-    <None Include="end_template.gcode" />
-    <None Include="start_template.gcode" />
+    <None Include="scripts\spiral_joint_gen.irt" />
+    <None Include="scripts\spiral_test.irt" />
     <QtRcc Include="qml.qrc" />
-    <None Include="main.qml" />
+    <ClInclude Include="AssemblyDivider\AssemblyDivider.h" />
+    <ClInclude Include="AssemblyPlanner.h" />
     <ClInclude Include="CadLoader.h" />
     <ClInclude Include="CutWarp.h" />
+    <ClInclude Include="JointGeometry.h" />
     <ClInclude Include="IritGuard.h" />
+    <ClInclude Include="IritJoint.h" />
     <ClInclude Include="IritMesh.h" />
     <ClInclude Include="MeshDivider.h" />
+    <ClInclude Include="PlannerBlocking.h" />
+    <ClInclude Include="PlannerGraph.h" />
+    <ClInclude Include="PlannerJoints.h" />
+    <ClInclude Include="PlannerOrder.h" />
     <ClInclude Include="PuzzleDivider.h" />
     <ClInclude Include="Trivariate.h" />
     <ClInclude Include="MeshData.h" />
@@ -152,6 +157,9 @@
   <ItemGroup>
     <QtMoc Include="AppController.h" />
     <QtMoc Include="MeshView.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="main.qml" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

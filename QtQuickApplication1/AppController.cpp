@@ -208,6 +208,7 @@ void AppController::runDivision(const DivisionSpec &spec)
                 dom, spec.splits);
     logPieceSizes();
 
+    applyJoints();
     describePieces(QStringLiteral("V-rep · ") + spec.note, spec.cellCount(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
 
@@ -264,6 +265,7 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
                 dom, spec.planes);
     logPieceSizes();
 
+    applyJoints();
     describePieces(QStringLiteral("mesh · ") + spec.note +
                    QStringLiteral(" · ") + m_warp.describe(),
                    spec.cellCount(), warning);
@@ -304,6 +306,7 @@ void AppController::runCellDivision(const QVector<CellBox> &cells,
     logCells(note, cells);
     logPieceSizes();
 
+    applyJoints();
     describePieces(note, cells.size(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
 
@@ -345,6 +348,8 @@ void AppController::describePieces(const QString &note, int gridCells,
                          .arg(maxSide[2], 0, 'g', 4)
                          .arg(biggest, 0, 'g', 4)
                          .arg(smallest, 0, 'g', 4);
+    if (!m_jointNote.isEmpty())
+        m_divisionInfo += QStringLiteral("\n") + m_jointNote;
     if (!warning.isEmpty())
         m_divisionInfo += QStringLiteral("\n") + warning;
 }
@@ -544,4 +549,99 @@ void AppController::setError(const QString &msg)
     m_detail   = msg;
     m_hasError = true;
     emit statusChanged();
+}
+
+// ------------------------------------------------------------------- joints --
+
+void AppController::setAddJoints(bool on)
+{
+    if (m_addJoints == on)
+        return;
+    m_addJoints = on;
+    emit jointsChanged();
+}
+
+void AppController::applyJoints()
+{
+    m_jointNote.clear();
+    if (!m_addJoints || m_pieces.size() < 2)
+        return;
+
+    // The planner decides WHERE joints may go, not the geometry. A pin on every
+    // shared face pegs most pieces on two axes at once and the puzzle then does
+    // not come apart at all - so the removal order is found first, and only the
+    // faces that order can tolerate get a joint.
+    const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
+    const Planner::TranslationalBlocking bare;
+    const Planner::Plan plan = Planner::extract(graph, bare);
+
+    if (!plan.complete) {
+        m_jointNote = QStringLiteral("joints: none - no removal order exists "
+                                     "under the translational model, so there is "
+                                     "nothing to place joints along");
+        return;
+    }
+
+    const Planner::JointSet chosen = Planner::chooseAlongOrder(graph, plan);
+
+    // Choose, then verify. The order must still hold with the pegs fitted.
+    const Planner::JointedBlocking jointed(chosen);
+    QString   why;
+    const int broken = Planner::replay(graph, jointed, plan, &why);
+
+    int skipped = 0;
+    const QVector<QVector<JointPlacement> > places =
+        IritJoint::planPlacementsFor(m_pieces, graph, chosen, m_joint, &skipped);
+
+    int done = 0, failed = 0, cuts = 0, noCut = 0;
+    QString firstErr;
+
+    for (int i = 0; i < m_pieces.size() && i < places.size(); ++i) {
+        if (places[i].isEmpty())
+            continue;
+
+        int     applied = 0, refused = 0;
+        QString err;
+        if (IritJoint::apply(&m_pieces[i].mesh, places[i], m_joint, &err,
+                             &applied, &refused)) {
+            ++done;
+            cuts += applied;
+            noCut += refused;
+        }
+        else {
+            ++failed;
+            if (firstErr.isEmpty())
+                firstErr = err;
+            qWarning().noquote() << "JOINT piece" << i << "-" << err;
+        }
+    }
+
+    for (const QString &line : plan.describe(6))
+        qDebug().noquote() << line;
+
+    double smallest = 1e30;
+    for (const QVector<JointPlacement> &list : places)
+        for (const JointPlacement &j : list)
+            smallest = qMin(smallest, IritJoint::thinnestFeature(m_joint, j.size));
+
+    m_jointNote = QStringLiteral("joints: %1 of %2 faces pegged (planner-chosen), "
+                                 "%3 piece(s) cut, %4 boolean(s)")
+                      .arg(Planner::countJoints(chosen))
+                      .arg(graph.contactCount()).arg(done).arg(cuts);
+    m_jointNote += (broken < 0)
+        ? QStringLiteral("; order holds - valid under jointed translational DBG, "
+                         "real collision check pending")
+        : QStringLiteral("; ORDER BROKEN - %1").arg(why);
+    if (smallest < 1e29)
+        m_jointNote += QStringLiteral(", thinnest pin %1 mm").arg(smallest, 0, 'f', 2);
+    if (smallest < 1.2)
+        m_jointNote += QStringLiteral(" - UNDER 3 extrusions, will not print");
+    if (noCut > 0)
+        m_jointNote += QStringLiteral(", %1 boolean(s) DECLINED - a missing hole "
+                                      "leaves a pin with nowhere to go").arg(noCut);
+    if (skipped > 0)
+        m_jointNote += QStringLiteral(", %1 face(s) too small").arg(skipped);
+    if (failed > 0)
+        m_jointNote += QStringLiteral(", %1 piece(s) FAILED (%2)")
+                           .arg(failed).arg(firstErr);
 }

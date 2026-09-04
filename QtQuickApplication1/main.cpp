@@ -1,5 +1,8 @@
 #include "AppController.h"
+#include "AssemblyDivider/AssemblyDivider.h"
 #include "CadLoader.h"
+#include "IritJoint.h"
+#include "PlannerJoints.h"
 #include "MeshDivider.h"
 #include "PuzzleDivider.h"
 #include "Trivariate.h"
@@ -7,6 +10,7 @@
 #include "MeshView.h"
 
 #include <QDebug>
+#include <QHash>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -197,6 +201,269 @@ static int divideCli(const QStringList &a)
     return 0;
 }
 
+// Volume by the divergence theorem, plus the count of edges used by exactly one
+// triangle. The volume is only meaningful for a closed mesh - which is exactly
+// why the open-edge count is reported next to it.
+struct MeshStats { double volume; int openEdges; int tris; };
+
+static MeshStats meshStats(const MeshData &m)
+{
+    MeshStats st = { 0.0, 0, m.triangleCount() };
+
+    for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+        const float *a = &m.pos[m.tris[t + 0] * 3];
+        const float *b = &m.pos[m.tris[t + 1] * 3];
+        const float *c = &m.pos[m.tris[t + 2] * 3];
+        st.volume += double(a[0]) * (double(b[1]) * double(c[2]) - double(b[2]) * double(c[1]))
+                   - double(a[1]) * (double(b[0]) * double(c[2]) - double(b[2]) * double(c[0]))
+                   + double(a[2]) * (double(b[0]) * double(c[1]) - double(b[1]) * double(c[0]));
+    }
+    st.volume = st.volume / 6.0;   // SIGNED: negative means inward-wound
+
+    // Weld by position first: the boolean emits its own vertices, so index
+    // identity says nothing about whether two triangles share an edge.
+    QHash<QString, int> weld;
+    QVector<int>        id(m.vertexCount(), -1);
+    for (int v = 0; v < m.vertexCount(); ++v) {
+        const QString key = QStringLiteral("%1_%2_%3")
+            .arg(double(m.pos[v * 3 + 0]), 0, 'f', 4)
+            .arg(double(m.pos[v * 3 + 1]), 0, 'f', 4)
+            .arg(double(m.pos[v * 3 + 2]), 0, 'f', 4);
+        auto it = weld.find(key);
+        if (it == weld.end()) { weld.insert(key, v); id[v] = v; }
+        else                  { id[v] = it.value(); }
+    }
+
+    QHash<quint64, int> use;
+    for (int t = 0; t + 2 < m.tris.size(); t += 3)
+        for (int e = 0; e < 3; ++e) {
+            const int u = id[m.tris[t + e]], v = id[m.tris[t + (e + 1) % 3]];
+            if (u == v) continue;
+            const quint64 key = (quint64(qMin(u, v)) << 32) | quint32(qMax(u, v));
+            use[key] += 1;
+        }
+    for (auto it = use.constBegin(); it != use.constEnd(); ++it)
+        if (it.value() == 1)
+            ++st.openEdges;
+
+    return st;
+}
+
+// Cuts Elber-style pin/hole pairs into every shared face, in place.
+//   --joints [--pinmin MM] [--sink FRACTION]
+// Reports per-piece failures rather than hiding them: a boolean that declines
+// almost always means the piece is not closed, which is worth knowing.
+static void jointsCli(const QStringList &a, QVector<PuzzlePiece> *pieces)
+{
+    const int at = a.indexOf(QStringLiteral("--joints"));
+    if (at < 0 || pieces == NULL || pieces->size() < 2)
+        return;
+
+    JointParams jp;
+    const int pinAt = a.indexOf(QStringLiteral("--pinmin"));
+    if (pinAt >= 0 && a.size() > pinAt + 1)
+        jp.minPinThickness = a.at(pinAt + 1).toDouble();
+    const int sinkAt = a.indexOf(QStringLiteral("--sink"));
+    if (sinkAt >= 0 && a.size() > sinkAt + 1)
+        jp.baseSink = a.at(sinkAt + 1).toDouble();
+    if (a.contains(QStringLiteral("--noclear"))) {
+        // Pin and hole identical. The volume the assembly then loses is the
+        // boolean's own error, with the designed clearance taken out of the
+        // picture - not a printable setting, a measurement aid.
+        jp.clearanceXY = 1.0;
+        jp.clearanceZ  = 1.0;
+    }
+
+    // Same route the app takes: the planner picks the faces, the geometry
+    // follows. Pegging every face would leave the puzzle welded shut.
+    const Planner::Graph graph = Planner::build(*pieces, 1e-6, 0.0);
+    const Planner::TranslationalBlocking bare;
+    const Planner::Plan order = Planner::extract(graph, bare);
+    if (!order.complete) {
+        std::printf("JOINT no removal order under the translational model - "
+                    "nothing to place joints along\n");
+        return;
+    }
+    const Planner::JointSet chosen = Planner::chooseAlongOrder(graph, order);
+
+    int skipped = 0;
+    const QVector<QVector<JointPlacement> > plan =
+        IritJoint::planPlacementsFor(*pieces, graph, chosen, jp, &skipped);
+
+    {   // Orientation probe. IRIT's booleans decide inside from the polygon
+        // winding, so a tool wound inward turns a union into a bite.
+        MeshData tool;
+        QString  terr;
+        if (IritJoint::preview(&tool, jp, &terr)) {
+            const MeshStats ts = meshStats(tool);
+            std::printf("JOINT tool: signed volume %.5g, %d tris, %d open edges\n",
+                        ts.volume, ts.tris, ts.openEdges);
+        }
+        else {
+            std::printf("JOINT tool probe failed: %s\n", qPrintable(terr));
+        }
+        if (!pieces->isEmpty()) {
+            const MeshStats ps = meshStats((*pieces)[0].mesh);
+            std::printf("JOINT piece 0: signed volume %.5g, %d tris, %d open edges\n",
+                        ps.volume, ps.tris, ps.openEdges);
+        }
+    }
+
+    double volBefore = 0.0, volAfter = 0.0;
+    int    openBefore = 0, openAfter = 0, damaged = 0;
+    for (const PuzzlePiece &q : *pieces) {
+        const MeshStats st = meshStats(q.mesh);
+        volBefore  += st.volume;
+        openBefore += st.openEdges;
+    }
+
+    int done = 0, failed = 0, cuts = 0, noCut = 0;
+    for (int i = 0; i < pieces->size() && i < plan.size(); ++i) {
+        if (plan[i].isEmpty())
+            continue;
+        const MeshStats was = meshStats((*pieces)[i].mesh);
+        int     applied = 0, refused = 0;
+        QString err;
+        if (IritJoint::apply(&(*pieces)[i].mesh, plan[i], jp, &err, &applied,
+                             &refused)) {
+            ++done;
+            cuts += applied;
+            noCut += refused;
+            const MeshStats now = meshStats((*pieces)[i].mesh);
+            // A pin adds volume and a hole removes some, but neither should be
+            // anywhere near the size of the piece. A big swing means the
+            // boolean ate the piece rather than modifying it.
+            if (was.volume > 1e-9 &&
+                qAbs(now.volume - was.volume) > 0.25 * was.volume) {
+                ++damaged;
+                std::printf("JOINT piece %d volume %.4g -> %.4g (%.0f%%), "
+                            "open edges %d -> %d\n",
+                            i, was.volume, now.volume,
+                            100.0 * now.volume / was.volume,
+                            was.openEdges, now.openEdges);
+            }
+        }
+        else {
+            ++failed;
+            std::printf("JOINT FAIL piece %d: %s\n", i, qPrintable(err));
+        }
+    }
+
+    for (const PuzzlePiece &q : *pieces) {
+        const MeshStats st = meshStats(q.mesh);
+        volAfter  += st.volume;
+        openAfter += st.openEdges;
+    }
+    double smallest = 1e30;
+    for (const QVector<JointPlacement> &list : plan)
+        for (const JointPlacement &j : list)
+            smallest = qMin(smallest, IritJoint::thinnestFeature(jp, j.size));
+
+    const Planner::JointedBlocking jointed(chosen);
+    QString   why;
+    const int broken = Planner::replay(graph, jointed, order, &why);
+
+    std::printf("JOINT %d of %d faces pegged (planner-chosen), %d pieces cut, "
+                "%d booleans, %d faces too small, %d pieces failed\n",
+                Planner::countJoints(chosen), graph.contactCount(),
+                done, cuts, skipped, failed);
+    if (noCut > 0)
+        std::printf("JOINT WARNING %d boolean(s) DECLINED - the tool missed the "
+                    "piece. A missing hole leaves a pin with nowhere to go and "
+                    "the puzzle will not close.\n", noCut);
+    std::printf("JOINT volume %.5g -> %.5g (%.2f%%), open edges %d -> %d, "
+                "%d piece(s) changed volume by more than 25%%\n",
+                volBefore, volAfter,
+                volBefore > 1e-9 ? 100.0 * volAfter / volBefore : 0.0,
+                openBefore, openAfter, damaged);
+    std::printf("JOINT %s\n", broken < 0
+        ? "order holds with the pegs fitted - valid under jointed translational "
+          "DBG; real collision check pending"
+        : qPrintable(QStringLiteral("ORDER BROKEN - %1").arg(why)));
+    if (smallest < 1e29)
+        std::printf("JOINT thinnest pin %.2f mm%s\n", smallest,
+                    smallest < 1.2 ? "  - UNDER 3 extrusions, will not print" : "");
+    std::fflush(stdout);
+}
+
+// Assembly planner, stages 1-3, on whatever the divider just produced:
+//   --plan [--stress] [--full]
+// --stress swaps in the deliberately over-blocking test model, so the
+// non-assemblable branch can be seen to work. --full prints every piece rather
+// than the first few.
+static void plannerCli(const QStringList &a, const QVector<PuzzlePiece> &pieces)
+{
+    if (!a.contains(QStringLiteral("--plan")))
+        return;
+    const int lim = a.contains(QStringLiteral("--full")) ? -1 : 8;
+
+    const Planner::Graph g = Planner::build(pieces, 1e-6, 0.0);
+    for (const QString &line : g.describe(lim))
+        std::printf("%s\n", qPrintable(line));
+
+    Planner::TranslationalBlocking translational;
+    Planner::AlwaysBlocking        stress;
+    const Planner::BlockingModel &model =
+        a.contains(QStringLiteral("--stress"))
+            ? static_cast<const Planner::BlockingModel &>(stress)
+            : static_cast<const Planner::BlockingModel &>(translational);
+
+    for (const QString &line : Planner::describeBlocking(g, model, lim))
+        std::printf("%s\n", qPrintable(line));
+
+    const Planner::Plan plan = Planner::extract(g, model);
+    for (const QString &line : plan.describe(lim))
+        std::printf("%s\n", qPrintable(line));
+
+    if (!plan.complete) {
+        std::fflush(stdout);
+        return;
+    }
+
+    // Stage 4a: what the divider currently does - a joint on every shared face.
+    const Planner::JointSet every = Planner::allContacts(g);
+    const Planner::JointedBlocking jointedAll(every);
+    const Planner::Plan planAll = Planner::extract(g, jointedAll);
+    std::printf("STAGE 4a joint on every contact (%d joints)\n",
+                Planner::countJoints(every));
+    if (planAll.complete) {
+        std::printf("         still disassemblable - %d pieces ordered\n",
+                    int(planAll.assembly.size()));
+    }
+    else {
+        std::printf("         NON-ASSEMBLABLE: %d piece(s) stuck\n",
+                    int(planAll.stuck.size()));
+        for (const QString &line : Planner::explainOverConstrained(g, every, lim < 0 ? -1 : lim))
+            std::printf("%s\n", qPrintable(line));
+    }
+
+    // Stage 4b: joints placed to suit the order found in stage 3.
+    const Planner::JointSet chosen = Planner::chooseAlongOrder(g, plan);
+    for (const QString &line : Planner::describeJoints(g, chosen, lim))
+        std::printf("%s\n", qPrintable(line));
+
+    const Planner::JointedBlocking jointedChosen(chosen);
+    QString   why;
+    const int bad = Planner::replay(g, jointedChosen, plan, &why);
+    if (bad < 0)
+        std::printf("         the stage 3 order still holds with these joints "
+                    "fitted - valid under jointed translational DBG; real "
+                    "collision check pending\n");
+    else
+        std::printf("         ORDER BROKEN by the chosen joints - %s\n",
+                    qPrintable(why));
+
+    int uncovered = 0;
+    for (int i = 0; i < g.contactCount(); ++i)
+        if (!chosen[i])
+            ++uncovered;
+    std::printf("         %d of %d contacts carry no joint - those faces are "
+                "held by their neighbours, not pegged\n",
+                uncovered, g.contactCount());
+
+    std::fflush(stdout);
+}
+
 // Headless mesh division:
 //   --meshdivide MODEL MODE ARGS... [--png OUT.png]
 // MODE is  uniform NX NY NZ | jitter NX NY NZ PCT SEED
@@ -260,8 +527,17 @@ static int meshDivideCli(const QStringList &a)
                     slo, shi, slo > 0 ? shi / slo : 0.0);
         std::printf("      neighbours per piece: min %d  max %d  (%d shared faces)\n",
                     bp.isEmpty() ? 0 : nlo, nhi, int(links.size()));
+
+        // Planning is Planner (stages 1-3) via --plan, below. The older
+        // AssemblyPlanner is no longer called from here: it assigns joints on a
+        // spanning tree and checks a spiral/dovetail lock, neither of which is
+        // the current design, and its verdict contradicted the new planner's on
+        // the same pieces.
         if (!bw.isEmpty())
             std::printf("NOTE  %s\n", qPrintable(bw));
+
+        jointsCli(a, &bp);
+        plannerCli(a, bp);
 
         const int png2 = a.indexOf(QStringLiteral("--png"));
         if (png2 >= 0 && a.size() > png2 + 1) {
@@ -348,6 +624,9 @@ static int meshDivideCli(const QStringList &a)
     if (!warn.isEmpty())
         std::printf("NOTE  %s\n", qPrintable(warn));
 
+    jointsCli(a, &pieces);
+    plannerCli(a, pieces);
+
     const int png = a.indexOf(QStringLiteral("--png"));
     if (png >= 0 && a.size() > png + 1) {
         MeshView view;
@@ -360,6 +639,47 @@ static int meshDivideCli(const QStringList &a)
         std::printf(img.save(a.at(png + 1)) ? "PNG   %s\n" : "FAIL  %s\n",
                     qPrintable(a.at(png + 1)));
     }
+    std::fflush(stdout);
+    return 0;
+}
+
+// Stage A of the assemblable divider:
+//   --assemble MODEL [N] [SEED]
+// Splits to a target count and prints the contact graph. Nothing is tested for
+// assemblability yet - that is Stage B.
+static int assembleCli(const QStringList &a)
+{
+    if (a.isEmpty()) {
+        std::printf("usage: --assemble MODEL [N] [SEED]\n");
+        return 2;
+    }
+
+    MeshData solid;
+    QString err;
+    if (!CadLoader::load(a.at(0), &solid, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+
+    const int     target = (a.size() > 1) ? a.at(1).toInt()  : 9;
+    const quint32 seed   = (a.size() > 2) ? quint32(a.at(2).toUInt()) : 7u;
+
+    std::printf("MODEL %s  v=%d t=%d  extent %g x %g x %g\n",
+                qPrintable(QFileInfo(a.at(0)).fileName()),
+                solid.vertexCount(), solid.triangleCount(),
+                solid.bmax[0] - solid.bmin[0],
+                solid.bmax[1] - solid.bmin[1],
+                solid.bmax[2] - solid.bmin[2]);
+
+    DividedSolid divided;
+    if (!AssemblyDivider::splitToTarget(solid, target, seed, &divided, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+
+    for (const QString &line : AssemblyDivider::describeStageA(divided))
+        std::printf("%s\n", qPrintable(line));
+
     std::fflush(stdout);
     return 0;
 }
@@ -378,6 +698,10 @@ int main(int argc, char *argv[])
         const int p = args.indexOf(QStringLiteral("--probe"));
         if (p >= 0)
             return probe(args.mid(p + 1));
+
+        const int asm_ = args.indexOf(QStringLiteral("--assemble"));
+        if (asm_ >= 0)
+            return assembleCli(args.mid(asm_ + 1));
 
         const int md = args.indexOf(QStringLiteral("--meshdivide"));
         if (md >= 0)

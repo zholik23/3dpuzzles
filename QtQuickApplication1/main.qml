@@ -144,6 +144,11 @@ ApplicationWindow {
                     id: modeBox
                     width: 190
                     model: [ "Uniform", "Random", "Max piece size" ]
+                    // Opens on Random, because that is the piece-count-driven
+                    // split the assemblable divider is built on. Uniform is a
+                    // grid by definition, so it is the only mode that still
+                    // wants three per-axis counts.
+                    currentIndex: 1
                 }
 
                 // Random splits recursively, so it has a target COUNT rather
@@ -177,7 +182,20 @@ ApplicationWindow {
                         text: "Curve %"; color: "#ccc"; height: curve.height
                         verticalAlignment: Text.AlignVCenter; rightPadding: 4
                     }
-                    SpinBox { id: curve; from: 0; to: 50; value: 12; width: 96 }
+                    // Off by default. Curving the cuts warps the model, cuts
+                    // it flat and un-warps the pieces; on a coarse mesh the
+                    // clip points are interpolated along long straight edges,
+                    // so un-warping does not put them back on the original
+                    // surface and the OUTER shape visibly bulges. Randomness
+                    // in the cut POSITIONS is what "Random" means - this is a
+                    // separate, opt-in effect.
+                    SpinBox {
+                        id: curve; from: 0; to: 50; value: 0; width: 96
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Bends the cut surfaces. Leave at 0 for " +
+                                      "straight planar cuts. Above 0 it deforms " +
+                                      "the outer shape of a coarse model."
+                    }
                     Label {
                         text: "Seed"; color: "#ccc"; height: seed.height
                         verticalAlignment: Text.AlignVCenter
@@ -211,6 +229,24 @@ ApplicationWindow {
                     SpinBox { id: maxAxis; from: 1; to: 64; value: 16; width: 100 }
                 }
 
+                CheckBox {
+                    id: jointsBox
+                    text: "Joints"
+                    // Not bound to app.addJoints: clicking a CheckBox breaks a
+                    // binding on `checked`, which would leave the two out of
+                    // step. The checkbox owns the state and pushes it down.
+                    checked: true
+                    onCheckedChanged: app.addJoints = checked
+                    contentItem: Text {
+                        text: parent.text; color: "#ccc"
+                        leftPadding: parent.indicator.width + 4
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Cut Elber's pin/hole pair into every shared " +
+                                  "face with an IRIT boolean, using the pin " +
+                                  "from his puz_vol.irt."
+                }
                 Button {
                     text: "Divide"
                     enabled: app.hasMesh
@@ -228,6 +264,18 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+
+            // What the division actually produced, joints included. The
+            // controller reports it here rather than in `detail`, which is the
+            // error channel.
+            Label {
+                Layout.fillWidth: true
+                visible: app.pieceCount > 0
+                text: app.divisionInfo
+                color: app.jointNote.indexOf("FAILED") >= 0 ? "#e88" : "#9cc07e"
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
             }
 
             Label {

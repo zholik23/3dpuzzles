@@ -1,0 +1,100 @@
+#
+# spiral_joint_gen.irt
+#
+# GENERATOR for the fluted spiral-cone joint (the photo shape), male + female.
+# Meant to be called by the pipeline to carve a joint onto a puzzle-piece face.
+#
+# Uses EucSprlOnSrf (Euclidean spiral on a surface) from your spirals.irt so the
+# flutes are evenly spaced in REAL space even as the cone tapers -- that even
+# spacing is exactly why this maps cleanly onto arbitrary pieces.
+#
+# STRATEGY (why male and female are guaranteed to mate):
+#   1. build a solid cone (the joint body)
+#   2. wind a spiral on the cone surface (EucSprlOnSrf), sweep a small profile
+#      along it -> "flute tool"; SUBTRACT it from the cone  => MALE (grooved cone)
+#   3. FEMALE = ( MALE scaled up by clearance ) subtracted from a block/socket.
+#      Because the female cavity is literally the male's negative + clearance,
+#      they screw together by construction. Never model the female separately.
+#
+# '*' between solids = Boolean intersection; '-Obj' = negative for subtraction.
+# VERIFY arg orders of EucSprlOnSrf / sweepSrf / booleans against your headers;
+# they are inferred from spirals.irt usage.
+#
+
+#############################################################################
+# Parameters (tune to match the photo / your print).
+#############################################################################
+JN_BaseR    = 0.50;   # cone base radius
+JN_TopR     = 0.08;   # cone top radius (0 = sharp point; >0 = truncated, sturdier)
+JN_Height   = 1.00;   # cone height
+JN_Starts   = 4;      # number of spiral flutes (photo looks like ~4)
+JN_Turns    = 1.5;    # turns over the height (fewer = easier to screw in)
+JN_FluteW   = 0.09;   # flute cutter width (groove size)
+JN_FluteD   = 0.09;   # flute cutter depth
+JN_Clear    = 0.04;   # male<->female clearance (~0.3-0.4 mm at print scale)
+
+#############################################################################
+# A cone surface of revolution (like s2 in spirals.irt: surfPRev of a segment).
+#############################################################################
+MakeConeSrf = function( BaseR, TopR, H ): profile:
+    # a straight generator line from (BaseR,0,0) to (TopR,0,H), revolved about Z
+    profile = ctlpt( E3, BaseR, 0, 0 ) + ctlpt( E3, TopR, 0, H ):
+    return = surfPRev( profile );
+
+#############################################################################
+# Build ONE flute cutter: a spiral on the cone, swept with a small circle.
+# phase (0..1) offsets the spiral start so we can place several evenly.
+#############################################################################
+MakeFluteTool = function( ConeSrf, Turns, FluteW, phase ): sprl: prof:
+    # EucSprlOnSrf( Srf, Dir, pitch, step, tol, subtol, numTurns ) -- arg order
+    # per spirals.irt line 124; 'pitch' controls turn spacing.
+    sprl = EucSprlOnSrf( ConeSrf, col, 1.0 / Turns, 0.02, 0.01, 1e-10, Turns ):
+    # rotate the spiral around Z by 'phase' of a full turn to space the starts
+    sprl = sprl * rz( 360 * phase ):
+    # a small circular profile to drag along the spiral -> a round groove rib
+    prof = pcircle( vector( 0, 0, 0 ), FluteW ):
+    return = sweepSrf( prof, sprl, 1.0 );   # sweep profile along spiral path
+
+#############################################################################
+# MALE = solid cone with 'Starts' spiral flutes subtracted.
+#############################################################################
+MakeMale = function( BaseR, TopR, H, Starts, Turns, FluteW ):
+	cone: coneSolid: tools: i: m:
+    coneSrf   = MakeConeSrf( BaseR, TopR, H ):
+    coneSolid = coneSrf:                       # (cap into a solid in your build)
+    m = coneSolid:
+    for ( i = 0, 1, Starts - 1,
+        tool = MakeFluteTool( coneSrf, Turns, FluteW, i / Starts ):
+        m = m - tool ):                        # subtract each flute
+    return = m;
+
+#############################################################################
+# FEMALE = socket block minus ( male grown by clearance ). Guaranteed to mate.
+#############################################################################
+MakeFemale = function( Male, BaseR, H, Clear ): socket: maleBig:
+    socket  = box( vector( -BaseR*1.3, -BaseR*1.3, 0 ),
+                   BaseR*2.6, BaseR*2.6, H*1.02 ):
+    maleBig = Male * sc( 1.0 + Clear ):        # grow male by clearance
+    return = socket - maleBig;                 # carve the mating cavity
+
+#############################################################################
+# Build and view one male + one female.
+#############################################################################
+JointMale   = MakeMale( JN_BaseR, JN_TopR, JN_Height,
+                        JN_Starts, JN_Turns, JN_FluteW );
+attrib( JointMale, "rgb", "0, 180, 60" );
+
+JointFemale = MakeFemale( JointMale, JN_BaseR, JN_Height, JN_Clear );
+attrib( JointFemale, "rgb", "60, 120, 200" );
+
+view( list( axes, JointMale ), 1 );
+pause();
+view( list( axes, JointFemale ), 1 );
+
+# save( "joint_male",   JointMale );
+# save( "joint_female", JointFemale );
+
+fnfree( "MakeConeSrf" );
+fnfree( "MakeFluteTool" );
+fnfree( "MakeMale" );
+fnfree( "MakeFemale" );

@@ -8,6 +8,7 @@
 // replaces the other.
 //
 #include "CutWarp.h"
+#include "IritJoint.h"
 #include "MeshData.h"
 #include "MeshDivider.h"
 #include "PuzzleDivider.h"
@@ -38,6 +39,11 @@ class AppController : public QObject {
 
     // How the cuts are shaped. Flat is the default; wave and grid bend them.
     Q_PROPERTY(QString cutShapeInfo READ cutShapeInfo NOTIFY cutShapeChanged)
+
+    // Joints. When on, every shared face gets Elber's pin/hole pair cut into
+    // the two pieces by an IRIT boolean, straight after the division runs.
+    Q_PROPERTY(bool    addJoints  READ addJoints  WRITE setAddJoints NOTIFY jointsChanged)
+    Q_PROPERTY(QString jointNote  READ jointNote  NOTIFY piecesChanged)
 
     Q_PROPERTY(int     pieceCount  READ pieceCount  NOTIFY piecesChanged)
     Q_PROPERTY(QString divisionInfo READ divisionInfo NOTIFY piecesChanged)
@@ -83,6 +89,9 @@ public:
     // small limit on a big model can otherwise ask for thousands of pieces.
     Q_INVOKABLE void divideBySize(double maxSizeMM, int maxPerAxis);
 
+    // --- joints ----------------------------------------------------------
+    void setAddJoints(bool on);
+
     // --- read side -------------------------------------------------------
     const MeshData &mesh()   const { return m_mesh; }
     const QVector<PuzzlePiece> &pieces() const { return m_pieces; }
@@ -102,6 +111,9 @@ public:
     int     pieceCount()   const { return m_pieces.size(); }
     QString divisionInfo() const { return m_divisionInfo; }
 
+    bool    addJoints()  const { return m_addJoints; }
+    QString jointNote()  const { return m_jointNote; }
+
     QStringList nameFilters() const;
     QStringList primitiveKinds() const;
 
@@ -111,6 +123,7 @@ signals:
     void trivariateChanged();
     void piecesChanged();
     void cutShapeChanged();
+    void jointsChanged();
 
 private:
     void setError(const QString &msg);
@@ -124,6 +137,9 @@ private:
     void runCellDivision(const QVector<CellBox> &cells, const MeshData &work,
                          const QString &note);
     void describePieces(const QString &note, int gridCells, const QString &warning);
+    // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
+    // pieces are described, so the reported counts are of the jointed result.
+    void applyJoints();
 
     // Dumps the chosen cut positions and the resulting piece sizes to the debug
     // output, so an even division can be told from an uneven one by reading.
@@ -144,6 +160,11 @@ private:
     QString m_trivInfo;
     QString m_divisionInfo;
     bool    m_hasError = false;
+
+    JointParams m_joint;
+    QString     m_jointNote;
+    // On by default: dividing a model is meant to produce jointed pieces.
+    bool        m_addJoints = true;
 
     // IRIT's tessellation fineness (higher = more polygons). Pieces get a
     // lower setting than the whole model: each covers a fraction of the domain
