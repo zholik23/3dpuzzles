@@ -1,4 +1,6 @@
 #include "PuzzleDivider.h"
+
+#include "MaterialField.h"
 #include "IritGuard.h"
 #include "IritMesh.h"          // brings in the IRIT C headers
 
@@ -350,6 +352,85 @@ void doRegion(void *v)
 
 } // namespace
 
+bool PuzzleDivider::divideCells(const Trivariate &tv,
+                                const QVector<CellBox> &cells,
+                                double fineNess, QVector<PuzzlePiece> *pieces,
+                                QString *error)
+{
+    pieces->clear();
+
+    if (!tv.isValid()) {
+        if (error) *error = QStringLiteral("No trivariate to divide.");
+        return false;
+    }
+    if (cells.isEmpty()) {
+        if (error) *error = QStringLiteral("No cells to extract.");
+        return false;
+    }
+
+    const TrivTVStruct *src = static_cast<const TrivTVStruct *>(tv.raw());
+    int failedCells = 0;
+
+    for (int c = 0; c < cells.size(); ++c) {
+        const CellBox &cb = cells[c];
+
+        RegionCtx rc;
+        rc.src = src;
+        for (int a = 0; a < 3; ++a) {
+            rc.p0[a] = cb.lo[a];
+            rc.p1[a] = cb.hi[a];
+        }
+        rc.result = NULL;
+
+        if (rc.p1[0] <= rc.p0[0] || rc.p1[1] <= rc.p0[1] ||
+            rc.p1[2] <= rc.p0[2]) {
+            ++failedCells;
+            continue;
+        }
+
+        if (!IritGuard::run(&rc, doRegion) || rc.result == NULL) {
+            ++failedCells;
+            continue;
+        }
+
+        PuzzlePiece piece;
+        // BSP cells have no grid position. The index is kept in i so a piece
+        // can still be named in a log; j and k stay 0 rather than pretending
+        // to be coordinates.
+        piece.i = c; piece.j = 0; piece.k = 0;
+        for (int a = 0; a < 3; ++a) {
+            piece.p0[a] = rc.p0[a];
+            piece.p1[a] = rc.p1[a];
+        }
+
+        Trivariate cell = Trivariate::adopt(rc.result,
+                              QStringLiteral("cell %1").arg(c));
+        QString cellErr;
+        if (!cell.tessellate(&piece.mesh, fineNess, &cellErr) ||
+            piece.mesh.isEmpty()) {
+            ++failedCells;
+            continue;
+        }
+
+        for (int a = 0; a < 3; ++a) {
+            piece.centre[a] = 0.5f * (piece.mesh.bmin[a] + piece.mesh.bmax[a]);
+            piece.size[a]   = piece.mesh.bmax[a] - piece.mesh.bmin[a];
+        }
+        pieces->append(std::move(piece));
+    }
+
+    if (pieces->isEmpty()) {
+        if (error)
+            *error = QStringLiteral("All %1 cells failed to extract.")
+                         .arg(cells.size());
+        return false;
+    }
+    if (failedCells > 0 && error != nullptr)
+        *error = QStringLiteral("%1 of %2 cells could not be extracted.")
+                     .arg(failedCells).arg(cells.size());
+    return true;
+}
+
 bool PuzzleDivider::divide(const Trivariate &tv, const DivisionSpec &spec,
                            double fineNess, QVector<PuzzlePiece> *pieces,
                            QString *error)
@@ -443,8 +524,22 @@ bool PuzzleDivider::divide(const Trivariate &tv, const DivisionSpec &spec,
     if (failedCells > 0 && error != nullptr)
         *error = QStringLiteral("%1 of %2 cells could not be extracted.")
                      .arg(failedCells).arg(nu * nv * nw);
+    const QString outPath = "C:\Users\Admin\Documents\IRIT_to_Gcode-main\docs";
+
+    // Example: If you want to save sub-regions based on your PuzzlePiece parameter boxes (p0 and p1):
+    // You can loop through pieces, extract their subRegion, and save them.
+    // Or if you just want to save the master trivariate:
+    QString err1;
+    if (tv.saveToFile(outPath, &err1)) {
+        std::printf("ITD   %s\n", qPrintable(outPath));
+    }
+    else {
+        std::printf("FAIL  %s\n", qPrintable(err1));
+    }
     return true;
 }
+
+
 
 QVector<PuzzleDivider::Neighbours>
 PuzzleDivider::adjacency(const QVector<PuzzlePiece> &pieces, const DivisionSpec &spec)
@@ -478,71 +573,283 @@ PuzzleDivider::adjacency(const QVector<PuzzlePiece> &pieces, const DivisionSpec 
 
 // ------------------------------------------------------------- BSP cells --
 
-QVector<CellBox> PuzzleDivider::buildBspCells(const double domain[6],
-                                              int targetPieces,
-                                              double splitJitter, quint32 seed)
+QVector<PuzzleDivider::BspNode>
+PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
+                            double splitJitter, quint32 seed, double minSide,
+                            const MaterialField *material)
 {
-    QVector<CellBox> cells;
+    QVector<BspNode> tree;
 
-    CellBox root;
+    BspNode root;
     for (int a = 0; a < 3; ++a) {
-        root.lo[a] = domain[a * 2];
-        root.hi[a] = domain[a * 2 + 1];
+        root.box.lo[a] = domain[a * 2];
+        root.box.hi[a] = domain[a * 2 + 1];
     }
-    cells.append(root);
+    tree.append(root);
 
     targetPieces = qBound(1, targetPieces, 4096);
-    if (targetPieces == 1 || !(root.volume() > 0.0))
-        return cells;
+    if (targetPieces == 1 || !(tree[0].box.volume() > 0.0))
+        return tree;
+
+    // Automatic floor: a fraction of the side of an average piece. Scales with
+    // the model and with how many pieces were asked for, so it needs no units
+    // and no tuning when either changes.
+    if (minSide <= 0.0)
+        minSide = 0.45 * std::cbrt(tree[0].box.volume() / double(targetPieces));
 
     QRandomGenerator rng(seed);
     splitJitter = qBound(0.0, splitJitter, 0.40);
 
-    while (cells.size() < targetPieces) {
-        // Pick a cell in proportion to its volume. Splitting uniformly at
-        // random would keep re-splitting whatever is already smallest and end
-        // up with a cloud of slivers next to one big block; weighting by volume
-        // keeps the sizes varied but comparable.
+    // The least material a piece may end up with. Deliberately generous: its job
+    // is to forbid EMPTY, not to equalise sizes, and a strict floor would reject
+    // so many cuts that the split would finish under target - trading the
+    // problem for the same symptom.
+    const bool   useMat  = material != nullptr && material->isValid() &&
+                           material->total() > 0.0;
+    const double matFloor = useMat
+        ? qMax(4.0 * material->voxelVolume(),
+               0.05 * material->total() / double(targetPieces))
+        : 0.0;
+
+    QVector<int>  leaves;        // node indices that are currently leaves
+    QVector<bool> exhausted;     // no axis long enough to cut
+    leaves.append(0);
+    exhausted.append(false);
+
+    while (leaves.size() < targetPieces) {
+        // Pick a leaf in proportion to its volume, ignoring ones already known
+        // to be uncuttable. Splitting uniformly at random would keep
+        // re-splitting whatever is already smallest and end up with a cloud of
+        // slivers next to one big block.
         double total = 0.0;
-        QVector<double> weight(cells.size());
-        for (int i = 0; i < cells.size(); ++i) {
-            weight[i] = qMax(0.0, cells[i].volume());
+        QVector<double> weight(leaves.size());
+        for (int i = 0; i < leaves.size(); ++i) {
+            const CellBox &lb = tree[leaves[i]].box;
+            weight[i] = exhausted[i]
+                ? 0.0
+                : qMax(0.0, useMat ? material->volumeIn(lb.lo, lb.hi)
+                                   : lb.volume());
             total    += weight[i];
         }
         if (!(total > 0.0))
+            break;                       // nothing left that can be cut
+
+        // Always split whichever leaf holds the MOST, rather than sampling in
+        // proportion to it. Sampling lets the biggest cell simply never come up
+        // again: on the armadillo at 6 pieces one piece kept 80% of the model
+        // because five of the cuts landed elsewhere. Splitting the largest every
+        // time bounds that - a piece can only stay large if it was large one cut
+        // ago, and it will be chosen again. The irregularity the puzzle needs
+        // comes from WHERE each cut falls (the jittered material share below),
+        // not from which cell is chosen.
+        int slot = -1;
+        double best = 0.0;
+        for (int i = 0; i < leaves.size(); ++i)
+            if (weight[i] > best) { best = weight[i]; slot = i; }
+        if (slot < 0)
             break;
 
-        double r = rng.generateDouble() * total;
-        int pick = cells.size() - 1;
-        for (int i = 0; i < cells.size(); ++i) {
-            r -= weight[i];
-            if (r <= 0.0) { pick = i; break; }
+        const int  nodeIdx = leaves[slot];
+        CellBox    cell    = tree[nodeIdx].box;
+
+        // Try the axes longest first. Cutting the longest keeps pieces blocky;
+        // falling through to a shorter one is what lets a cell that is already
+        // thin in its longest direction still be divided.
+        int order[3] = { 0, 1, 2 };
+        for (int i = 0; i < 3; ++i)
+            for (int j = i + 1; j < 3; ++j)
+                if (cell.extent(order[j]) > cell.extent(order[i]))
+                    std::swap(order[i], order[j]);
+
+        // Pass 0 demands that both halves stay connected; pass 1 drops that if
+        // no axis could manage it. Relaxing rather than giving up keeps the
+        // piece count honest - a severed piece is repaired downstream, whereas a
+        // missing one cannot be.
+        bool didSplit = false;
+        for (int pass = 0; pass < 2 && !didSplit; ++pass)
+        for (int t = 0; t < 3 && !didSplit; ++t) {
+            const int    axis   = order[t];
+            const double extent = cell.extent(axis);
+
+            // Both halves have to clear the floor, so the cut fraction is
+            // confined to [minSide/extent, 1 - minSide/extent]. If the jitter
+            // range does not reach that window the axis is unusable; if the
+            // window itself is empty the cell is too short to halve at all.
+            if (extent < 2.0 * minSide)
+                continue;
+
+            const double edge = minSide / extent;
+            const double lo   = qMax(0.5 - splitJitter, edge);
+            const double hi   = qMin(0.5 + splitJitter, 1.0 - edge);
+            if (hi <= lo)
+                continue;
+
+            double f = lo + rng.generateDouble() * (hi - lo);
+
+            if (useMat) {
+                const double cellMat = material->volumeIn(cell.lo, cell.hi);
+                if (cellMat < 2.0 * matFloor)
+                    continue;              // not enough here to make two pieces
+
+                // Aim for a random SHARE OF THE MATERIAL rather than a random
+                // position. Keeping the share off 0.5 is what keeps the pieces
+                // irregular - the point of the jitter - while measuring it in
+                // material rather than in space is what keeps both halves
+                // non-empty.
+                const double want = cellMat *
+                    (0.5 + (rng.generateDouble() * 2.0 - 1.0) * splitJitter);
+
+                // Material to the left grows monotonically with the plane, so a
+                // bisection finds the share exactly. Each probe is eight lookups.
+                double a = lo, b = hi;
+                for (int it = 0; it < 24; ++it) {
+                    const double mid = 0.5 * (a + b);
+                    double half[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
+                    half[axis] = cell.lo[axis] + extent * mid;
+                    (material->volumeIn(cell.lo, half) < want ? a : b) = mid;
+                }
+                f = 0.5 * (a + b);
+
+                // Accept only if BOTH sides keep material. This is the induction
+                // step: every leaf then descends from a non-empty parent through
+                // non-empty cuts, so no leaf can be empty.
+                double cut[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
+                cut[axis] = cell.lo[axis] + extent * f;
+                const double left = material->volumeIn(cell.lo, cut);
+                if (left < matFloor || cellMat - left < matFloor)
+                    continue;              // try the next axis
+
+                if (pass == 0) {
+                    double rlo[3] = { cell.lo[0], cell.lo[1], cell.lo[2] };
+                    rlo[axis] = cut[axis];
+                    if (!material->isConnected(cell.lo, cut) ||
+                        !material->isConnected(rlo, cell.hi))
+                        continue;          // this cut would sever a piece
+                }
+            }
+
+            const double at = cell.lo[axis] + extent * f;
+
+            BspNode left, right;
+            left.box  = cell;   left.box.hi[axis]  = at;   left.parent  = nodeIdx;
+            right.box = cell;   right.box.lo[axis] = at;   right.parent = nodeIdx;
+
+            const int li = tree.size();
+            tree.append(left);
+            tree.append(right);
+            tree[nodeIdx].child[0] = li;
+            tree[nodeIdx].child[1] = li + 1;
+
+            leaves[slot] = li;               // the parent stops being a leaf
+            exhausted[slot] = false;
+            leaves.append(li + 1);
+            exhausted.append(false);
+            didSplit = true;
         }
 
-        // Always cut the longest axis. Cutting a random axis lets a cell get
-        // repeatedly sliced the same way and turn into a wafer, which is both
-        // ugly and unprintable.
-        CellBox cell = cells[pick];
-        int    axis  = 0;
-        double best  = -1.0;
-        for (int a = 0; a < 3; ++a)
-            if (cell.extent(a) > best) { best = cell.extent(a); axis = a; }
-        if (!(best > 0.0))
-            break;
-
-        // Near the middle, nudged. Splitting close to an end is what produces
-        // the slivers, so the jitter is bounded well inside the cell.
-        const double f  = 0.5 + (rng.generateDouble() * 2.0 - 1.0) * splitJitter;
-        const double at = cell.lo[axis] + best * f;
-
-        CellBox right = cell;
-        right.lo[axis] = at;
-        cell.hi[axis]  = at;
-
-        cells[pick] = cell;              // assign before append: appending can
-        cells.append(right);             // reallocate and invalidate references
+        if (!didSplit)
+            exhausted[slot] = true;          // too small on every axis
     }
-    return cells;
+
+    return tree;
+}
+
+QVector<int> PuzzleDivider::leavesOf(const QVector<BspNode> &tree,
+                                     QVector<CellBox> *boxes)
+{
+    QVector<int> out;
+    if (boxes)
+        boxes->clear();
+    if (tree.isEmpty())
+        return out;
+
+    QVector<int> stack;
+    stack.append(0);
+    while (!stack.isEmpty()) {
+        const int n = stack.takeLast();
+        if (n < 0 || n >= tree.size())
+            continue;
+        if (tree[n].isLeaf()) {
+            out.append(n);
+            if (boxes)
+                boxes->append(tree[n].box);
+        }
+        else {
+            stack.append(tree[n].child[1]);
+            stack.append(tree[n].child[0]);
+        }
+    }
+    return out;
+}
+
+bool PuzzleDivider::splitLeaf(QVector<BspNode> &tree, int node,
+                              double splitJitter, double minSide,
+                              QRandomGenerator *rng)
+{
+    if (node < 0 || node >= tree.size() || !tree[node].isLeaf() || rng == nullptr)
+        return false;
+
+    CellBox cell = tree[node].box;
+    splitJitter = qBound(0.0, splitJitter, 0.40);
+
+    // Longest axis first, falling through to shorter ones - the same rule the
+    // initial build uses, so a re-split is indistinguishable from an original.
+    int order[3] = { 0, 1, 2 };
+    for (int i = 0; i < 3; ++i)
+        for (int j = i + 1; j < 3; ++j)
+            if (cell.extent(order[j]) > cell.extent(order[i]))
+                std::swap(order[i], order[j]);
+
+    for (int t = 0; t < 3; ++t) {
+        const int    axis   = order[t];
+        const double extent = cell.extent(axis);
+        if (extent < 2.0 * minSide)
+            continue;
+
+        const double edge = minSide / extent;
+        const double lo   = qMax(0.5 - splitJitter, edge);
+        const double hi   = qMin(0.5 + splitJitter, 1.0 - edge);
+        if (hi <= lo)
+            continue;
+
+        const double f  = lo + rng->generateDouble() * (hi - lo);
+        const double at = cell.lo[axis] + extent * f;
+
+        BspNode left, right;
+        left.box  = cell;   left.box.hi[axis]  = at;   left.parent  = node;
+        right.box = cell;   right.box.lo[axis] = at;   right.parent = node;
+
+        const int li = tree.size();
+        tree.append(left);
+        tree.append(right);
+        tree[node].child[0] = li;
+        tree[node].child[1] = li + 1;
+        return true;
+    }
+    return false;
+}
+
+void PuzzleDivider::collapse(QVector<BspNode> &tree, int node)
+{
+    if (node < 0 || node >= tree.size())
+        return;
+    // The subtree stays in the array but becomes unreachable, which is fine -
+    // leavesOf only ever walks down from the root.
+    tree[node].child[0] = -1;
+    tree[node].child[1] = -1;
+}
+
+QVector<CellBox> PuzzleDivider::buildBspCells(const double domain[6],
+                                              int targetPieces,
+                                              double splitJitter, quint32 seed,
+                                              double minSide,
+                                              const MaterialField *material)
+{
+    const QVector<BspNode> tree =
+        buildBspTree(domain, targetPieces, splitJitter, seed, minSide, material);
+    QVector<CellBox> boxes;
+    leavesOf(tree, &boxes);
+    return boxes;
 }
 
 QVector<PuzzleDivider::Neighbours>

@@ -40,11 +40,16 @@ bool AssemblyDivider::splitToTarget(const MeshData &solid, int targetPieces,
                                solid.bmin[1], solid.bmax[1],
                                solid.bmin[2], solid.bmax[2] };
 
-    out->cells = PuzzleDivider::buildBspCells(domain, targetPieces, 0.28, seed);
+    Q_UNUSED(domain);
 
-    // --- clip the model into those cells ----------------------------------
+    // --- split and clip, absorbing crumbs ---------------------------------
+    // Goes through divideBspAbsorbing rather than buildBspCells + divideCells so
+    // Stage A sees exactly the division the app produces. Splitting them would
+    // mean the contact graph was built on pieces nobody else has.
     QString clipReport;
-    if (!MeshDivider::divideCells(solid, out->cells, &out->pieces, &clipReport)) {
+    if (!MeshDivider::divideBspAbsorbing(solid, targetPieces, 0.28, seed,
+                                         &out->pieces, &out->cells,
+                                         &out->absorbed, &clipReport)) {
         if (error) *error = clipReport;
         return false;
     }
@@ -118,6 +123,11 @@ QStringList AssemblyDivider::describeStageA(const DividedSolid &d, int maxPieces
                .arg(d.emptyCells)
                .arg(d.contactCount());
 
+    if (d.absorbed > 0)
+        out << QStringLiteral("         %1 crumb(s) absorbed - a cell that clipped"
+                              " to almost no material was merged back with its"
+                              " BSP sibling").arg(d.absorbed);
+
     if (d.pieceCount() != d.requestedPieces)
         out << QStringLiteral("         count is a TARGET - came out at %1, not %2"
                               " (cells outside the model hold no material)")
@@ -126,10 +136,23 @@ QStringList AssemblyDivider::describeStageA(const DividedSolid &d, int maxPieces
     const int shown = qMin(maxPiecesShown, d.pieceCount());
     for (int i = 0; i < shown; ++i) {
         const PuzzlePiece &p = d.pieces[i];
-        out << QStringLiteral("  piece %1  box [%2 %3 %4]..[%5 %6 %7]  %8 neighbour(s)")
+        // Cell AND material, because they are not the same thing and the
+        // difference is where crumbs come from: a full-size cell out at a
+        // spike tip can hold almost nothing.
+        const double cellVol = (p.p1[0] - p.p0[0]) * (p.p1[1] - p.p0[1])
+                             * (p.p1[2] - p.p0[2]);
+        const double matVol  = double(p.size[0]) * double(p.size[1])
+                             * double(p.size[2]);
+
+        out << QStringLiteral("  piece %1  cell [%2 %3 %4]..[%5 %6 %7] vol %8"
+                              "   material %9 x %10 x %11 vol %12   %13 neighbour(s)")
                    .arg(i, 3)
-                   .arg(p.p0[0], 0, 'f', 2).arg(p.p0[1], 0, 'f', 2).arg(p.p0[2], 0, 'f', 2)
-                   .arg(p.p1[0], 0, 'f', 2).arg(p.p1[1], 0, 'f', 2).arg(p.p1[2], 0, 'f', 2)
+                   .arg(p.p0[0], 0, 'g', 4).arg(p.p0[1], 0, 'g', 4).arg(p.p0[2], 0, 'g', 4)
+                   .arg(p.p1[0], 0, 'g', 4).arg(p.p1[1], 0, 'g', 4).arg(p.p1[2], 0, 'g', 4)
+                   .arg(cellVol, 0, 'g', 4)
+                   .arg(p.size[0], 0, 'g', 4).arg(p.size[1], 0, 'g', 4)
+                   .arg(p.size[2], 0, 'g', 4)
+                   .arg(matVol, 0, 'g', 4)
                    .arg(d.contacts[i].size());
 
         for (const Contact &c : d.contacts[i])

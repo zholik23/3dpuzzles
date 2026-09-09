@@ -1081,3 +1081,168 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
     }
     return true;
 }
+
+bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
+                                     double jitter, quint32 seed,
+                                     QVector<PuzzlePiece> *pieces,
+                                     QVector<CellBox> *cells,
+                                     int *absorbed, QString *report)
+{
+    if (absorbed) *absorbed = 0;
+    pieces->clear();
+    cells->clear();
+
+    const double dom[6] = { mesh.bmin[0], mesh.bmax[0],
+                            mesh.bmin[1], mesh.bmax[1],
+                            mesh.bmin[2], mesh.bmax[2] };
+
+    QVector<PuzzleDivider::BspNode> tree =
+        PuzzleDivider::buildBspTree(dom, targetPieces, jitter, seed, 0.0);
+
+    const double rootVol  = (dom[1] - dom[0]) * (dom[3] - dom[2]) * (dom[5] - dom[4]);
+    const double minSide  = 0.45 * std::cbrt(rootVol / double(qMax(1, targetPieces)));
+    QRandomGenerator rng(seed ^ 0x9E3779B9u);
+
+    QString warning;
+    int taken = 0, added = 0;
+
+    // The two failure modes are opposite ends of the same distribution, so both
+    // are corrected in the same loop: crumbs get absorbed, oversized pieces get
+    // split back down. Doing only one of them just moves the imbalance.
+    for (int pass = 0; pass < 12; ++pass) {
+        const QVector<int> leafNode = PuzzleDivider::leavesOf(tree, cells);
+
+        pieces->clear();
+        if (!divideCells(mesh, *cells, pieces, &warning)) {
+            if (report) *report = warning;
+            return false;
+        }
+        if (pieces->size() < 2)
+            break;
+
+        // How much MATERIAL a piece holds. Three metrics were tried and only
+        // the third works on a model like an armadillo:
+        //
+        //   longest side  - a sliver off a limb is long, so this misses it
+        //   bbox volume   - measures the REGION, not the material. A piece at
+        //                   the edge of the model can span a wide box and hold
+        //                   only a thin shell of surface inside it.
+        //   solid volume  - what is actually wanted, but only defined when the
+        //                   piece is watertight.
+        //
+        // So: use the true volume when every piece is closed, and fall back to
+        // bbox volume when they are not. One metric for the whole division
+        // either way - mixing them would make the median meaningless.
+        const auto boxVolume = [](const PuzzlePiece &p) {
+            return double(p.size[0]) * double(p.size[1]) * double(p.size[2]);
+        };
+        const auto solidVolume = [](const MeshData &m) {
+            double v = 0.0;
+            for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+                const float *a = &m.pos[m.tris[t + 0] * 3];
+                const float *b = &m.pos[m.tris[t + 1] * 3];
+                const float *c = &m.pos[m.tris[t + 2] * 3];
+                v += double(a[0]) * (double(b[1]) * double(c[2]) - double(b[2]) * double(c[1]))
+                   - double(a[1]) * (double(b[0]) * double(c[2]) - double(b[2]) * double(c[0]))
+                   + double(a[2]) * (double(b[0]) * double(c[1]) - double(b[1]) * double(c[0]));
+            }
+            return std::fabs(v) / 6.0;
+        };
+        const auto isClosed = [](const MeshData &m) {
+            QSet<quint64> dir;
+            for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+                dir.insert((quint64(m.tris[t + 0]) << 32) | m.tris[t + 1]);
+                dir.insert((quint64(m.tris[t + 1]) << 32) | m.tris[t + 2]);
+                dir.insert((quint64(m.tris[t + 2]) << 32) | m.tris[t + 0]);
+            }
+            for (const quint64 k : dir) {
+                const quint64 back = (quint64(quint32(k & 0xffffffffu)) << 32)
+                                   | quint32(k >> 32);
+                if (!dir.contains(back))
+                    return false;
+            }
+            return true;
+        };
+
+        bool allClosed = true;
+        for (const PuzzlePiece &p : *pieces)
+            if (!isClosed(p.mesh)) { allClosed = false; break; }
+
+        QVector<double> vols;
+        vols.reserve(pieces->size());
+        for (const PuzzlePiece &p : *pieces)
+            vols.append(allClosed ? solidVolume(p.mesh) : boxVolume(p));
+        QVector<double> sorted = vols;
+        std::sort(sorted.begin(), sorted.end());
+        const double median = sorted[sorted.size() / 2];
+
+        const double crumbVol = 0.35 * median;   // measured: crumbs sit under
+        const double bigVol   = 2.50 * median;   // this, real pieces above it
+
+        // --- absorb crumbs -------------------------------------------------
+        QVector<int> toCollapse;
+        for (int i = 0; i < pieces->size(); ++i) {
+            if (vols[i] >= crumbVol)
+                continue;
+            const int idx = (*pieces)[i].i;
+            if (idx < 0 || idx >= leafNode.size())
+                continue;
+            const int parent = tree[leafNode[idx]].parent;
+            if (parent < 0)
+                continue;
+
+            // ONLY when both children are leaves. Collapsing a parent whose
+            // sibling subtree was split further throws away every one of those
+            // cuts at once, which is how a single piece ends up being half the
+            // model. Merging exactly two adjacent cells is bounded; merging a
+            // whole subtree is not.
+            const int c0 = tree[parent].child[0], c1 = tree[parent].child[1];
+            if (c0 < 0 || c1 < 0 || !tree[c0].isLeaf() || !tree[c1].isLeaf())
+                continue;
+            if (!toCollapse.contains(parent))
+                toCollapse.append(parent);
+        }
+
+        // --- split anything oversized --------------------------------------
+        QVector<int> toSplit;
+        for (int i = 0; i < pieces->size(); ++i) {
+            if (vols[i] <= bigVol)
+                continue;
+            const int idx = (*pieces)[i].i;
+            if (idx >= 0 && idx < leafNode.size())
+                toSplit.append(leafNode[idx]);
+        }
+
+        if (toCollapse.isEmpty() && toSplit.isEmpty())
+            break;                       // the spread is acceptable
+
+        // Absorbing raises the median too, so a greedy cascade could keep
+        // eating pieces that were never crumbs. The baseline is what the FIRST
+        // clip produced, not the target - cells landing outside the model
+        // already put the count below target.
+        int netAfter = pieces->size() - toCollapse.size() + toSplit.size();
+        if (netAfter < (pieces->size() * 2) / 3)
+            toCollapse.clear();
+
+        for (int n : toCollapse)
+            PuzzleDivider::collapse(tree, n);
+        taken += toCollapse.size();
+
+        for (int n : toSplit)
+            if (PuzzleDivider::splitLeaf(tree, n, jitter, minSide, &rng))
+                ++added;
+    }
+
+    if (absorbed) *absorbed = taken;
+    if (report) {
+        QStringList notes;
+        if (!warning.isEmpty())
+            notes << warning;
+        if (taken > 0)
+            notes << QStringLiteral("%1 crumb(s) absorbed").arg(taken);
+        if (added > 0)
+            notes << QStringLiteral("%1 oversized piece(s) split again").arg(added);
+        *report = notes.join(QStringLiteral("; "));
+    }
+    return !pieces->isEmpty();
+}

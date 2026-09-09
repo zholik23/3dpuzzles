@@ -1,8 +1,14 @@
 #include "IritGuard.h"
 
 #include <csetjmp>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+
+#ifdef _MSC_VER
+#include <crtdbg.h>
+#endif
 
 extern "C" {
 #include "inc_irit/irit_sm.h"
@@ -60,6 +66,22 @@ void onMvar(IritMvarFatalErrorType e)   { record("mvar", IritMvarDescribeError(e
 void onBool(BoolFatalErrorType     e)   { record("bool", IritBoolDescribeError(e));            bailOut(); }
 void onGeom(IritGeomFatalErrorType e)   { record("geom", IritGeomDescribeError(e));            bailOut(); }
 
+// Not every IRIT failure goes through a fatal-error callback. The IRIT
+// libraries linked here are built with DEBUG, so some unhandled geometric
+// configurations end in assert() -> abort() instead: a boolean on a spiky
+// non-convex model dumps the intersection loop it could not close and the
+// process dies with exit code 3, taking every other piece down with it.
+//
+// abort() cannot be trapped by the callbacks above, but it does raise SIGABRT
+// first, and that can be. Jumping out of the handler leaves IRIT's own heap
+// state unknown, so this is containment, not recovery: it exists so one
+// impossible piece is reported and skipped rather than ending the run.
+extern "C" void onAbort(int)
+{
+    record("bool", "assertion failed inside IRIT (unsupported configuration)");
+    bailOut();
+}
+
 } // namespace
 
 void IritGuard::installHandlers()
@@ -82,13 +104,37 @@ bool IritGuard::run(void *ctx, void (*fn)(void *))
     g_msg[0] = '\0';
 
     if (setjmp(g_jmp) != 0) {
+        // Back here from a fatal error or an assertion. The CRT report mode is
+        // deliberately left as-is: another guarded call is usually next, and a
+        // dialog appearing between them is exactly what this avoids.
         g_armed = false;
-        return false;                       // trapped a fatal error
+        std::signal(SIGABRT, SIG_DFL);
+        return false;
     }
+
+    // Trap the abort path for the duration of the call only, and put the
+    // previous disposition back afterwards so nothing outside is affected.
+#ifdef _MSC_VER
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+    // Send IRIT's assertions to stderr rather than to a message box. The debug
+    // CRT puts up a modal Abort/Retry/Ignore dialog BEFORE it raises SIGABRT,
+    // so without this the window blocks the whole app and the handler below
+    // never runs - invisible in a console run, fatal in the GUI.
+#if defined(_MSC_VER) && defined(_DEBUG)
+    const int prevReport = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
+    void (*prevAbort)(int) = std::signal(SIGABRT, onAbort);
 
     g_armed = true;
     fn(ctx);
     g_armed = false;
+
+    std::signal(SIGABRT, prevAbort);
+#if defined(_MSC_VER) && defined(_DEBUG)
+    _CrtSetReportMode(_CRT_ASSERT, prevReport);
+#endif
     return true;
 }
 

@@ -81,6 +81,20 @@ public:
                             QVector<PuzzlePiece> *pieces, QString *report,
                             double cutDetail = 0.0);
 
+    // Recursive split + clip, with crumbs absorbed.
+    //
+    // The splitter's minimum bounds the CELL, which is not the same as bounding
+    // the PIECE: on an organic model a full-size cell can still clip down to a
+    // crumb at a claw tip or the end of a tail. So this clips, measures what
+    // came out, and collapses the parent of anything far smaller than the
+    // median piece - a cell and its BSP sibling merge back into the parent box
+    // exactly, so the division stays a partition of boxes throughout.
+    static bool divideBspAbsorbing(const MeshData &mesh, int targetPieces,
+                                   double jitter, quint32 seed,
+                                   QVector<PuzzlePiece> *pieces,
+                                   QVector<CellBox> *cells,
+                                   int *absorbed, QString *report);
+
     // Curved cuts, done by warping the model, cutting it flat, and un-warping
     // the pieces. See CutWarp for why the map is always invertible.
     static MeshData warp(const MeshData &mesh, const CutWarp &w);

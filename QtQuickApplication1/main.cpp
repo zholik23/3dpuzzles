@@ -1,6 +1,12 @@
 #include "AppController.h"
 #include "AssemblyDivider/AssemblyDivider.h"
 #include "CadLoader.h"
+#include <functional>
+
+#include "CageBoolean.h"
+#include "MaterialField.h"
+#include "PieceExport.h"
+#include "IritSolid.h"
 #include "IritJoint.h"
 #include "PlannerJoints.h"
 #include "MeshDivider.h"
@@ -197,6 +203,21 @@ static int divideCli(const QStringList &a)
         else
             std::printf("FAIL  could not write %s\n", qPrintable(a.at(png + 1)));
     }
+    
+    
+        const QString outPath = "C:\Users\Admin\Documents\IRIT_to_Gcode-main\docs";
+
+        // Example: If you want to save sub-regions based on your PuzzlePiece parameter boxes (p0 and p1):
+        // You can loop through pieces, extract their subRegion, and save them.
+        // Or if you just want to save the master trivariate:
+        QString err1;
+        if (tv.saveToFile(outPath, &err1)) {
+            std::printf("ITD   %s\n", qPrintable(outPath));
+        }
+        else {
+            std::printf("FAIL  %s\n", qPrintable(err1));
+        }
+    
     std::fflush(stdout);
     return 0;
 }
@@ -499,15 +520,19 @@ static int meshDivideCli(const QStringList &a)
         const double dom[6] = { mesh.bmin[0], mesh.bmax[0],
                                 mesh.bmin[1], mesh.bmax[1],
                                 mesh.bmin[2], mesh.bmax[2] };
-        const QVector<CellBox> cells =
-            PuzzleDivider::buildBspCells(dom, int(num(2, 24)), 0.28,
-                                         quint32(num(3, 7)));
+        QVector<CellBox> cells;
         QVector<PuzzlePiece> bp;
         QString bw;
-        if (!MeshDivider::divideCells(mesh, cells, &bp, &bw)) {
+        int absorbed = 0;
+        if (!MeshDivider::divideBspAbsorbing(mesh, int(num(2, 24)), 0.28,
+                                             quint32(num(3, 7)),
+                                             &bp, &cells, &absorbed, &bw)) {
             std::printf("FAIL  %s\n", qPrintable(bw));
             return 1;
         }
+        if (absorbed > 0)
+            std::printf("ABSORB %d crumb(s) merged back into their neighbour\n",
+                        absorbed);
         double vlo = 1e300, vhi = 0.0;
         for (const CellBox &c : cells) { vlo = qMin(vlo, c.volume()); vhi = qMax(vhi, c.volume()); }
 
@@ -684,6 +709,223 @@ static int assembleCli(const QStringList &a)
     return 0;
 }
 
+// Elber Section 5 end to end:  --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png]
+// Wraps the model in a bounding-cage trivariate, divides the cage, then
+// intersects each boxy cage piece with the original model.
+static int cageCli(const QStringList &a)
+{
+    if (a.isEmpty()) {
+        std::printf("usage: --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png]\n");
+        return 2;
+    }
+
+    MeshData model;
+    QString err;
+    if (!CadLoader::load(a.at(0), &model, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+    const int n    = (a.size() > 1) ? a.at(1).toInt() : 8;
+    const int seed = (a.size() > 2) ? a.at(2).toInt() : 7;
+
+    Trivariate cage = Trivariate::boundingCage(model, &err);
+    if (!cage.isValid()) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+
+    // Recursive split in world proportions, mapped back to the parameter
+    // domain - the same path the GUI takes, so the CLI measures what the app
+    // actually does. A grid spec cannot honour an arbitrary piece count.
+    double dom[6];
+    cage.domain(dom);
+
+    double ext[3];
+    for (int a = 0; a < 3; ++a)
+        ext[a] = qMax(1e-9, double(model.bmax[a]) - double(model.bmin[a]));
+    const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
+
+    const MaterialField field = MaterialField::build(model);
+    const QVector<CellBox> world =
+        PuzzleDivider::buildBspCells(wdom, qMax(1, n), 0.35, quint32(seed), 0.0,
+                                     field.isValid() ? &field : nullptr);
+
+    QVector<CellBox> cells;
+    cells.reserve(world.size());
+    for (const CellBox &w : world) {
+        CellBox c;
+        for (int a = 0; a < 3; ++a) {
+            const double lo = dom[a * 2], span = dom[a * 2 + 1] - lo;
+            c.lo[a] = lo + span * (w.lo[a] / ext[a]);
+            c.hi[a] = lo + span * (w.hi[a] / ext[a]);
+        }
+        cells.append(c);
+    }
+
+    QVector<PuzzlePiece> pieces;
+    QString warn;
+    if (!PuzzleDivider::divideCells(cage, cells, 12.0, &pieces, &warn)) {
+        std::printf("FAIL  %s\n", qPrintable(warn));
+        return 1;
+    }
+    std::printf("CAGE  asked %d -> %d BSP cell(s) -> %d boxy cage piece(s)\n",
+                n, int(cells.size()), int(pieces.size()));
+
+    const int png = a.indexOf(QStringLiteral("--png"));
+    const auto shoot = [&](const QVector<PuzzlePiece> &ps, const QString &f) {
+        MeshView v;
+        v.setWidth(900); v.setHeight(700);
+        v.setPieces(ps);
+        v.setExplode(0.45);
+        QImage img(900, 700, QImage::Format_RGB32);
+        { QPainter pr(&img); v.paint(&pr); }
+        std::printf(img.save(f) ? "PNG   %s\n" : "FAIL  %s\n", qPrintable(f));
+    };
+    if (png >= 0 && a.size() > png + 1)
+        shoot(pieces, a.at(png + 1));
+
+    // Volume is the decisive check on an intersection: the trimmed pieces must
+    // add up to the MODEL, not to the cage. Eyeballing a render cannot tell a
+    // real intersection from a union that happens to look plausible.
+    const auto vol = [](const MeshData &m) {
+        double v = 0.0;
+        for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+            const float *A = &m.pos[m.tris[t + 0] * 3];
+            const float *B = &m.pos[m.tris[t + 1] * 3];
+            const float *C = &m.pos[m.tris[t + 2] * 3];
+            v += double(A[0]) * (double(B[1]) * double(C[2]) - double(B[2]) * double(C[1]))
+               - double(A[1]) * (double(B[0]) * double(C[2]) - double(B[2]) * double(C[0]))
+               + double(A[2]) * (double(B[0]) * double(C[1]) - double(B[1]) * double(C[0]));
+        }
+        return qAbs(v) / 6.0;
+    };
+    // The cage total has to be measured on repaired geometry: straight out of
+    // the tessellator a cage box has mixed winding, and the divergence integral
+    // then reads anything at all (a whole 40^3 cage measured as 0).
+    double cageVol = 0.0;
+    for (int i = 0; i < pieces.size(); ++i) {
+        MeshData c = pieces[i].mesh;
+        IritSolid::orientConsistently(&c);
+        cageVol += IritSolid::signedVolume(c);
+        // How much of the model actually falls in this cell. A cell with no
+        // model vertices in it has nothing to intersect, so an empty result
+        // there is the CORRECT answer, not a boolean failure.
+        int inside = 0;
+        for (int v = 0; v + 2 < model.pos.size(); v += 3)
+            if (model.pos[v + 0] >= c.bmin[0] && model.pos[v + 0] <= c.bmax[0] &&
+                model.pos[v + 1] >= c.bmin[1] && model.pos[v + 1] <= c.bmax[1] &&
+                model.pos[v + 2] >= c.bmin[2] && model.pos[v + 2] <= c.bmax[2])
+                ++inside;
+        std::printf("  cage[%d] tris %5d  vol %9.5g  model verts in cell %d\n",
+                    i, c.triangleCount(), IritSolid::signedVolume(c), inside);
+    }
+
+    const CageBoolean::Result r = CageBoolean::intersectAll(&pieces, model, 12.0);
+
+    double trimVol = 0.0;
+    for (const PuzzlePiece &p : pieces) trimVol += vol(p.mesh);
+
+    // How many SEPARATE solids each piece is made of. A cage cell is convex but
+    // the model is not, so one cell can catch two unconnected lumps - a bit of
+    // a leg and a bit of a tail - and they come back as a single "piece" that
+    // could never be printed or assembled as one body.
+    const auto components = [](const MeshData &src, QVector<double> *vols) {
+        MeshData m = src;
+        IritSolid::weldClose(&m);            // boolean output is not welded
+
+        const int nv = int(m.pos.size() / 3);
+        QVector<int> parent(nv);
+        for (int i = 0; i < nv; ++i) parent[i] = i;
+        std::function<int(int)> find = [&](int x) {
+            while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+            return x;
+        };
+        const auto unite = [&](int a, int b) {
+            a = find(a); b = find(b);
+            if (a != b) parent[a] = b;
+        };
+        for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+            unite(m.tris[t + 0], m.tris[t + 1]);
+            unite(m.tris[t + 1], m.tris[t + 2]);
+        }
+
+        // Volume per component, by the divergence theorem on its own triangles.
+        QHash<int, double> vol;
+        for (int t = 0; t + 2 < m.tris.size(); t += 3) {
+            const float *A = &m.pos[m.tris[t + 0] * 3];
+            const float *B = &m.pos[m.tris[t + 1] * 3];
+            const float *C = &m.pos[m.tris[t + 2] * 3];
+            const double d =
+                  double(A[0]) * (double(B[1]) * double(C[2]) - double(B[2]) * double(C[1]))
+                - double(A[1]) * (double(B[0]) * double(C[2]) - double(B[2]) * double(C[0]))
+                + double(A[2]) * (double(B[0]) * double(C[1]) - double(B[1]) * double(C[0]));
+            vol[find(m.tris[t + 0])] += d / 6.0;
+        }
+        vols->clear();
+        for (auto it = vol.constBegin(); it != vol.constEnd(); ++it)
+            vols->append(qAbs(it.value()));
+        std::sort(vols->begin(), vols->end(), std::greater<double>());
+        return vols->size();
+    };
+
+    int splitPieces = 0, strayLumps = 0;
+    for (int i = 0; i < pieces.size(); ++i) {
+        const MeshData &m = pieces[i].mesh;
+        QVector<double> cv;
+        const int nc = components(m, &cv);
+        if (nc > 1) { ++splitPieces; strayLumps += nc - 1; }
+
+        QString extra;
+        for (int c = 0; c < cv.size() && c < 6; ++c)
+            extra += QStringLiteral(" %1").arg(cv[c], 0, 'g', 3);
+
+        std::printf("  trim[%d] tris %5d  vol %9.5g  closed %s  PARTS %d %s%s\n",
+                    i, m.triangleCount(), IritSolid::signedVolume(m),
+                    IritSolid::isClosed(m) ? "yes" : "NO", nc,
+                    qPrintable(extra), nc > 1 ? "  <- DISCONNECTED" : "");
+    }
+    std::printf("PARTS %d of %d piece(s) are more than one solid; %d stray lump(s)\n",
+                splitPieces, int(pieces.size()), strayLumps);
+
+    const double modelVol = vol(model);
+    // Two independent measures of the model's own volume. The divergence
+    // integral counts every shell it is given, so a mesh with interior
+    // geometry reads high; the voxel fill uses parity down each column and
+    // reports what is actually solid. They disagreeing is a fact about the
+    // MODEL, not about the division.
+    std::printf("MODEL divergence %.5g   voxel-fill %.5g (%.0f%% of divergence)\n",
+                vol(model), field.total(),
+                100.0 * field.total() / qMax(1e-9, vol(model)));
+    std::printf("VOL   model %.5g   cage pieces %.5g (%.0f%%)   trimmed %.5g (%.0f%%)\n",
+                modelVol, cageVol, 100.0 * cageVol / qMax(1e-9, modelVol),
+                trimVol, 100.0 * trimVol / qMax(1e-9, modelVol));
+    for (const QString &line : CageBoolean::describe(r))
+        std::printf("%s\n", qPrintable(line));
+
+    if (png >= 0 && a.size() > png + 2)
+        shoot(pieces, a.at(png + 2));
+
+    // --save PATH [PATH...] : write the divided model out, format by extension.
+    const int sv = a.indexOf(QStringLiteral("--save"));
+    if (sv >= 0)
+        for (int k = sv + 1; k < a.size() && !a.at(k).startsWith(QStringLiteral("--")); ++k) {
+            PieceExport::Result pr;
+            QString perr;
+            if (PieceExport::save(pieces, a.at(k),
+                                  a.contains(QStringLiteral("--split")),
+                                  a.contains(QStringLiteral("--spread")),
+                                  &pr, &perr))
+                std::printf("SAVE  %s : %d piece(s) written, %d skipped\n",
+                            qPrintable(a.at(k)), pr.written, pr.skipped);
+            else
+                std::printf("SAVE  FAIL %s : %s\n",
+                            qPrintable(a.at(k)), qPrintable(perr));
+        }
+
+    std::fflush(stdout);
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
@@ -698,6 +940,10 @@ int main(int argc, char *argv[])
         const int p = args.indexOf(QStringLiteral("--probe"));
         if (p >= 0)
             return probe(args.mid(p + 1));
+
+        const int cg = args.indexOf(QStringLiteral("--cage"));
+        if (cg >= 0)
+            return cageCli(args.mid(cg + 1));
 
         const int asm_ = args.indexOf(QStringLiteral("--assemble"));
         if (asm_ >= 0)

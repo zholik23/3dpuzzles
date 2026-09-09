@@ -14,6 +14,7 @@
 #include "MeshData.h"
 #include "Trivariate.h"
 
+#include <QRandomGenerator>
 #include <QString>
 #include <QVector>
 
@@ -43,6 +44,8 @@ struct DivisionSpec {
 // One leaf of a recursive split: an axis-aligned box, in parameter space for a
 // trivariate or world space for a mesh. Still a box, so region extraction and
 // box clipping both work on it unchanged.
+class MaterialField;
+
 struct CellBox {
     double lo[3] = { 0, 0, 0 };
     double hi[3] = { 0, 0, 0 };
@@ -65,8 +68,66 @@ public:
     // Cells are chosen for splitting in proportion to their volume and cut on
     // their longest axis, near the middle, so the pieces stay blocky instead of
     // degenerating into slivers.
+    // `minSide` is the shortest a cell is allowed to get on any axis. A cell is
+    // only cut where BOTH halves stay above it, and a cell with no axis long
+    // enough to cut that way is left alone - so the split can finish below the
+    // target rather than manufacture slivers nobody can print or handle.
+    //
+    // Pass 0 for automatic: 0.45 of the side of an average piece, which scales
+    // with both the model and the requested count.
+    // `material`, when given, makes the split MODEL-AWARE: cells are chosen and
+    // cut by how much of the model they contain rather than by how big their box
+    // is. That is what stops the splitter putting a cell in thin air.
+    //
+    // The guarantee it buys is worth stating exactly. The root cell holds all
+    // the material, and a cut is only accepted when BOTH halves keep some, so by
+    // induction every leaf holds material. No empty cells means none get dropped
+    // later, so the piece count comes out as asked. Without it, a cage that is
+    // 90% air - an armadillo's is - reliably loses a piece or two.
     static QVector<CellBox> buildBspCells(const double domain[6], int targetPieces,
-                                          double splitJitter, quint32 seed);
+                                          double splitJitter, quint32 seed,
+                                          double minSide = 0.0,
+                                          const MaterialField *material = nullptr);
+
+    // The same split, kept as a TREE rather than flattened to leaves.
+    //
+    // Worth keeping because of what it makes possible afterwards: a cell and
+    // its sibling always merge back into their parent box EXACTLY, so a piece
+    // that turns out to hold almost no material can be absorbed by collapsing
+    // its parent. Two arbitrary adjacent cells have no such box, which is why
+    // the tree has to survive the split rather than being discarded.
+    struct BspNode {
+        CellBox box;
+        int     child[2] = { -1, -1 };   // both -1 = leaf
+        int     parent   = -1;
+        bool    isLeaf() const { return child[0] < 0; }
+    };
+
+    static QVector<BspNode> buildBspTree(const double domain[6], int targetPieces,
+                                         double splitJitter, quint32 seed,
+                                         double minSide = 0.0,
+                                         const MaterialField *material = nullptr);
+
+    // Leaf node indices, in traversal order. `boxes` receives the matching
+    // cells, so leaf i of the division is tree node leafIndex[i].
+    static QVector<int> leavesOf(const QVector<BspNode> &tree,
+                                 QVector<CellBox> *boxes);
+
+    // Turns `node` back into a leaf, discarding its subtree. Its box already
+    // covers exactly what its descendants covered, so the division stays a
+    // partition - it just has one fewer, larger piece there.
+    static void collapse(QVector<BspNode> &tree, int node);
+
+    // Splits one leaf in place, same rules as the initial build: longest axis
+    // first, near the middle, both halves clearing `minSide`. Returns false if
+    // the cell is too small to cut on any axis.
+    //
+    // This is what balances the division. Absorbing crumbs merges cells and can
+    // leave a piece far bigger than the rest; splitting the oversized ones back
+    // down is the other half of the same job.
+    static bool splitLeaf(QVector<BspNode> &tree, int node,
+                          double splitJitter, double minSide,
+                          QRandomGenerator *rng);
 
     // Face-sharing pairs among arbitrary boxes: they meet on a plane and their
     // footprints overlap there with real area. Needed because BSP cells have no
@@ -100,6 +161,18 @@ public:
                                             int maxCellsPerAxis);
 
     // Extracts every cell. `fineNess` follows IRIT's tessellation convention.
+    // Divide into an arbitrary set of parameter-space boxes, rather than the
+    // grid a DivisionSpec describes.
+    //
+    // A DivisionSpec is three lists of cut planes, so it can only ever produce
+    // nu x nv x nw cells - asking it for 2 pieces gets you 2x2x2 = 8. The BSP
+    // cells from buildBspCells are not a grid at all, and this is what puts
+    // them through the same region extraction, so a requested piece count is
+    // honoured exactly and the adjacency comes out irregular.
+    static bool divideCells(const Trivariate &tv, const QVector<CellBox> &cells,
+                            double fineNess, QVector<PuzzlePiece> *pieces,
+                            QString *error);
+
     static bool divide(const Trivariate &tv, const DivisionSpec &spec,
                        double fineNess, QVector<PuzzlePiece> *pieces,
                        QString *error);

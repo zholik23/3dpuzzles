@@ -7,10 +7,12 @@
 // reference the trivariate fit will eventually be checked against, so neither
 // replaces the other.
 //
+#include "CageBoolean.h"
 #include "CutWarp.h"
 #include "IritJoint.h"
 #include "MeshData.h"
 #include "MeshDivider.h"
+#include "PieceExport.h"
 #include "PuzzleDivider.h"
 #include "Trivariate.h"
 
@@ -46,6 +48,9 @@ class AppController : public QObject {
     Q_PROPERTY(QString jointNote  READ jointNote  NOTIFY piecesChanged)
 
     Q_PROPERTY(int     pieceCount  READ pieceCount  NOTIFY piecesChanged)
+    // Saving only makes sense once a division exists.
+    Q_PROPERTY(bool    canSave     READ canSave     NOTIFY piecesChanged)
+    Q_PROPERTY(QStringList saveFilters READ saveFilters CONSTANT)
     Q_PROPERTY(QString divisionInfo READ divisionInfo NOTIFY piecesChanged)
 
 public:
@@ -65,6 +70,12 @@ public:
     Q_INVOKABLE void useBoundingCage();
     Q_INVOKABLE void showWholeModel();          // back to the undivided mesh
 
+    // --- saving ----------------------------------------------------------
+    // Writes the divided model out. The format follows the extension: .itd,
+    // .obj or .stl. `separateFiles` splits an STL into one file per piece,
+    // which is what a slicer wants when the pieces go to a printer.
+    Q_INVOKABLE void savePieces(const QUrl &url, bool separateFiles, bool spread);
+
     // --- dividing --------------------------------------------------------
     //
     // These divide whatever is currently the subject: a trivariate if one has
@@ -81,7 +92,12 @@ public:
     // `pieces` is a target count, not a grid: the domain is split recursively,
     // one cell at a time, so the sizes are independent of each other and the
     // adjacency comes out irregular. Global cut planes cannot do that.
-    Q_INVOKABLE void divideRandom(int pieces, double curvePercent, int seed);
+    Q_INVOKABLE void divideRandom(int pieces);
+
+    // Rolls a new seed so the next divide falls differently. The seed is kept
+    // internal: it is a number to manage, not a decision to make, and the log
+    // still records it so any layout can be reproduced.
+    Q_INVOKABLE void newLayout();
 
     // Non-uniform by physical size: cuts land where the accumulated real-world
     // extent reaches `maxSizeMM`, so pieces come out roughly equal in actual
@@ -110,6 +126,8 @@ public:
     QString cutShapeInfo() const { return m_warp.describe(); }
     int     pieceCount()   const { return m_pieces.size(); }
     QString divisionInfo() const { return m_divisionInfo; }
+    bool    canSave()      const { return !m_pieces.isEmpty(); }
+    QStringList saveFilters() const { return PieceExport::nameFilters(); }
 
     bool    addJoints()  const { return m_addJoints; }
     QString jointNote()  const { return m_jointNote; }
@@ -136,6 +154,8 @@ private:
     void runMeshDivision(const MeshDivisionSpec &spec, const MeshData &work);
     void runCellDivision(const QVector<CellBox> &cells, const MeshData &work,
                          const QString &note);
+    // The V-rep equivalent: BSP cells in the trivariate's parameter domain.
+    void runTrivCellDivision(const QVector<CellBox> &cells, const QString &note);
     void describePieces(const QString &note, int gridCells, const QString &warning);
     // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
     // pieces are described, so the reported counts are of the jointed result.
@@ -149,7 +169,12 @@ private:
     void logPieceSizes() const;
 
     MeshData             m_mesh;
+    // The polygonal model as loaded, kept apart from m_mesh because adopting a
+    // trivariate REPLACES m_mesh with the cage's tessellation. Elber's Section 5
+    // needs the original around afterwards to intersect the cage pieces with.
+    MeshData             m_sourceMesh;
     CutWarp              m_warp;
+    quint32              m_layoutSeed = 7;
     Trivariate           m_triv;
     QVector<PuzzlePiece> m_pieces;
     QString              m_loadedPath;
@@ -159,6 +184,7 @@ private:
     QString m_detail;
     QString m_trivInfo;
     QString m_divisionInfo;
+    QString m_booleanNote;
     bool    m_hasError = false;
 
     JointParams m_joint;

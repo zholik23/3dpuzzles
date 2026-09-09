@@ -63,7 +63,11 @@ public:
     bool evaluate(double u, double v, double w, double p[3]) const;
 
     void *raw() const { return m_tv; }              // TrivTVStruct *
+    // Saves this trivariate natively to an .itd file
+    bool saveToFile(const QString& path, QString* error) const;
 
+    // Extracts a sub-region trivariate given parameter bounds
+    Trivariate subRegion(double u0, double u1, double v0, double v1, double w0, double w1) const;
 private:
     void   *m_tv = nullptr;
     QString m_label;

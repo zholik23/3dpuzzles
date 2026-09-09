@@ -1,7 +1,11 @@
 #include "AppController.h"
+
+#include "MaterialField.h"
 #include "CadLoader.h"
 
 #include <QDebug>
+#include <QRandomGenerator>
+#include <algorithm>
 #include <cmath>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -49,6 +53,7 @@ void AppController::loadPath(const QString &path)
     // worth making on its own.
     if (!CadLoader::load(path, &mesh, &error)) {
         m_mesh = MeshData();
+        m_sourceMesh = MeshData();
         m_pieces.clear();
         m_triv = Trivariate();
         emit meshChanged();
@@ -59,7 +64,8 @@ void AppController::loadPath(const QString &path)
     }
 
     const qint64 ms = timer.elapsed();
-    m_mesh = mesh;
+    m_mesh       = mesh;
+    m_sourceMesh = mesh;        // survives adopting a cage over the top
     m_pieces.clear();
     m_triv = Trivariate();
     m_trivInfo.clear();
@@ -188,6 +194,55 @@ void AppController::showWholeModel()
 
 // ----------------------------------------------------------------- dividing --
 
+void AppController::savePieces(const QUrl &url, bool separateFiles,
+                               bool spread)
+{
+    if (m_pieces.isEmpty()) {
+        setError(QStringLiteral("Divide the model before saving."));
+        return;
+    }
+
+    QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (path.isEmpty()) {
+        setError(QStringLiteral("No file name given."));
+        return;
+    }
+
+    // A dialog that filters by type still lets a name through without one, and
+    // the writer picks the format from the extension - so default rather than
+    // refuse.
+    if (!PieceExport::canWrite(path))
+        path += QStringLiteral(".itd");
+
+    PieceExport::Result r;
+    QString err;
+    if (!PieceExport::save(m_pieces, path, separateFiles, spread, &r, &err)) {
+        setError(err);
+        return;
+    }
+
+    for (const QString &line : r.problems)
+        qDebug().noquote() << QStringLiteral("SAVE  ") + line;
+
+    m_status = QStringLiteral("Saved %1 piece(s) to %2")
+                   .arg(r.written).arg(QFileInfo(path).fileName());
+    m_detail = QStringLiteral("%1 · %2 piece(s) written%3%4")
+                   .arg(r.format)
+                   .arg(r.written)
+                   .arg(r.skipped > 0
+                            ? QStringLiteral(", %1 skipped").arg(r.skipped)
+                            : QString())
+                   .arg(QStringLiteral("%1%2")
+                            .arg(r.separateFiles
+                                     ? QStringLiteral(" · one file per piece")
+                                     : QString())
+                            .arg(r.spread
+                                     ? QStringLiteral(" · spread out for slicing")
+                                     : QString()));
+    m_hasError = false;
+    emit statusChanged();
+}
+
 void AppController::runDivision(const DivisionSpec &spec)
 {
     QElapsedTimer timer;
@@ -201,6 +256,23 @@ void AppController::runDivision(const DivisionSpec &spec)
     }
 
     m_pieces = std::move(pieces);
+
+    // Elber Section 5, Fig. 14c -> 14d -> 14e. The division above gives boxy
+    // sub-trivariates of the CAGE; intersecting each with the original model is
+    // what trims them back to the real surface while leaving the interior cut
+    // faces alone. Without it the pieces keep the cage's shape, which is why a
+    // cage-divided model comes out cuboid.
+    if (!m_sourceMesh.isEmpty()) {
+        const CageBoolean::Result br =
+            CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+        for (const QString &line : CageBoolean::describe(br))
+            qDebug().noquote() << line;
+        // Dropped cells are not failures: a box cage covers more than the
+        // model, so some cells legitimately hold no material.
+        m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
+                                       "cell(s) dropped, %3 failed")
+                            .arg(br.intersected).arg(br.dropped).arg(br.failed);
+    }
 
     double dom[6];
     m_triv.domain(dom);
@@ -272,6 +344,49 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
 
     m_status   = QStringLiteral("%1 — %2 pieces").arg(m_fileName).arg(m_pieces.size());
+    m_detail   = m_divisionInfo;
+    m_hasError = false;
+
+    emit piecesChanged();
+    emit statusChanged();
+}
+
+void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
+                                        const QString &note)
+{
+    QElapsedTimer timer;
+    timer.start();
+
+    QVector<PuzzlePiece> pieces;
+    QString warning;
+    if (!PuzzleDivider::divideCells(m_triv, cells, kPieceFineNess,
+                                    &pieces, &warning)) {
+        setError(warning);
+        return;
+    }
+
+    m_pieces = std::move(pieces);
+
+    // Elber Section 5: the cells above are sub-trivariates of the CAGE, so each
+    // still has the cage's outer shape until it is intersected with the model.
+    if (!m_sourceMesh.isEmpty()) {
+        const CageBoolean::Result br =
+            CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+        for (const QString &line : CageBoolean::describe(br))
+            qDebug().noquote() << line;
+        m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
+                                       "cell(s) dropped, %3 failed")
+                            .arg(br.intersected).arg(br.dropped).arg(br.failed);
+    }
+
+    logCells(QStringLiteral("V-rep BSP cells in parameter space · ") + note, cells);
+    logPieceSizes();
+
+    applyJoints();
+    describePieces(QStringLiteral("V-rep · ") + note, cells.size(), warning);
+    m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+
+    m_status   = QStringLiteral("%1 — %2 pieces").arg(m_triv.label()).arg(m_pieces.size());
     m_detail   = m_divisionInfo;
     m_hasError = false;
 
@@ -393,27 +508,72 @@ void AppController::divideBySize(double maxSizeMM, int maxPerAxis)
     runMeshDivision(MeshDivider::toBuildVolume(work, budget, cap), work);
 }
 
-void AppController::divideRandom(int pieces, double curvePercent, int seed)
+void AppController::newLayout()
 {
-    const int     target = qBound(1, pieces, 2048);
-    const quint32 s      = quint32(qMax(1, seed));
+    m_layoutSeed = QRandomGenerator::global()->bounded(1, 100000);
+    if (!m_mesh.isEmpty() && !m_pieces.isEmpty())
+        divideRandom(m_pieces.size());
+}
 
-    // Two layers of irregularity off one seed: the recursive split makes the
-    // piece SIZES and the adjacency irregular, and the warp bends the cut
-    // surfaces so they are not flat planes.
-    m_warp.enabled = curvePercent > 0.0;
-    m_warp.amount  = qBound(0.0, curvePercent / 100.0, 0.5);
-    m_warp.seed    = s;
-    m_warp.reseed();
-    emit cutShapeChanged();
+void AppController::divideRandom(int pieces)
+{
+    const int target = qBound(1, pieces, 2048);
+
+    // Straight planar cuts. The warp is left off: it deforms the outer shape of
+    // a coarse mesh, and the randomness that matters is in WHERE the cuts fall.
+    m_warp.enabled = false;
 
     if (m_triv.isValid()) {
-        // A trivariate is region-extracted per cell, and a BSP leaf is still a
-        // box in parameter space - but PuzzleDivider::divide currently walks a
-        // grid, so the V-rep path stays on jittered planes for now.
-        const int side   = qMax(1, int(std::ceil(std::cbrt(double(target)))));
-        const int counts[3] = { side, side, side };
-        runDivision(PuzzleDivider::jittered(m_triv, counts, 0.35, s));
+        // Recursive split, not a grid. Rounding the target up to a cube
+        // (ceil(cbrt(n))^3) is what used to turn a request for 2 pieces into 8,
+        // and it also forced every interior piece to have exactly six
+        // neighbours - the regular arrangement the BSP exists to avoid.
+        double dom[6];
+        m_triv.domain(dom);
+
+        // Split in WORLD proportions, then map the cells back to parameter
+        // space. The cage maps its unit domain onto a bounding box that is
+        // rarely cubic, so "cut the longest axis" and the minimum-size floor
+        // are only meaningful once the domain is scaled to real extents -
+        // otherwise a parameter-cubic cell comes out as a long world slab.
+        const MeshData &ref = m_sourceMesh.isEmpty() ? m_mesh : m_sourceMesh;
+        double ext[3];
+        for (int a = 0; a < 3; ++a)
+            ext[a] = qMax(1e-9, double(ref.bmax[a]) - double(ref.bmin[a]));
+
+        const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
+
+        // Voxelise the model so the split can follow the material instead of
+        // the cage. Local coordinates: the field's origin is the model's
+        // minimum corner, which is exactly what wdom above is measured from.
+        const MaterialField field = MaterialField::build(ref);
+        if (!field.isValid())
+            qDebug().noquote()
+                << "DIVIDE  could not voxelise the model - falling back to "
+                   "splitting the cage by volume, so empty cells are possible";
+
+        const QVector<CellBox> world =
+            PuzzleDivider::buildBspCells(wdom, target, 0.35, m_layoutSeed, 0.0,
+                                         field.isValid() ? &field : nullptr);
+
+        QVector<CellBox> cells;
+        cells.reserve(world.size());
+        for (const CellBox &w : world) {
+            CellBox c;
+            for (int a = 0; a < 3; ++a) {
+                const double lo = dom[a * 2], span = dom[a * 2 + 1] - lo;
+                c.lo[a] = lo + span * (w.lo[a] / ext[a]);
+                c.hi[a] = lo + span * (w.hi[a] / ext[a]);
+            }
+            cells.append(c);
+        }
+
+        QString note = QStringLiteral("recursive split · %1 of %2 cells · seed %3")
+                           .arg(cells.size()).arg(target).arg(m_layoutSeed);
+        if (cells.size() < target)
+            note += QStringLiteral(" · below target: the rest would have been "
+                                   "under the minimum piece size");
+        runTrivCellDivision(cells, note);
         return;
     }
 
@@ -422,12 +582,40 @@ void AppController::divideRandom(int pieces, double curvePercent, int seed)
                             work.bmin[1], work.bmax[1],
                             work.bmin[2], work.bmax[2] };
 
-    const QVector<CellBox> cells =
-        PuzzleDivider::buildBspCells(dom, target, 0.28, s);
+    // minSide 0 = automatic: the splitter derives a floor from the model size
+    // and the target count. That bounds the CELL, which is not the same thing
+    // as bounding the PIECE - on an organic model a full-size cell can still
+    // clip down to a crumb at a claw tip or the end of a tail. So the cells are
+    // clipped, the result measured, and any crumb absorbed by collapsing its
+    // parent in the tree: a cell and its sibling merge back into the parent box
+    // exactly, so the division stays a partition of boxes throughout.
+    QVector<CellBox>     cells;
+    QVector<PuzzlePiece> pieces_;
+    QString              warning;
+    int absorbed = 0;
 
-    runCellDivision(cells, work,
-                    QStringLiteral("recursive split · %1 cells · seed %2 · %3")
-                        .arg(cells.size()).arg(s).arg(m_warp.describe()));
+    if (!MeshDivider::divideBspAbsorbing(work, target, 0.28, m_layoutSeed,
+                                         &pieces_, &cells, &absorbed, &warning)) {
+        setError(warning);
+        return;
+    }
+
+    double smallestCell = 1e300;
+    for (const CellBox &c : cells)
+        for (int a = 0; a < 3; ++a)
+            smallestCell = qMin(smallestCell, c.extent(a));
+
+    QString note = QStringLiteral("recursive split · %1 of %2 cells · seed %3")
+                       .arg(cells.size()).arg(target).arg(m_layoutSeed);
+    if (absorbed > 0)
+        note += QStringLiteral(" · %1 crumb(s) absorbed into their neighbour")
+                    .arg(absorbed);
+    if (cells.size() < target)
+        note += QStringLiteral(" · below target: the rest would have been under"
+                               " the minimum piece size");
+    note += QStringLiteral(" · smallest cell side %1").arg(smallestCell, 0, 'g', 3);
+
+    runCellDivision(cells, work, note);
 }
 
 

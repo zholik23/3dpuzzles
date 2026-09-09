@@ -47,6 +47,7 @@ struct DividedSolid {
     int requestedPieces = 0;
     int emptyCells      = 0;   // cells the model never reaches
     int openPieces      = 0;   // pieces that came out as non-watertight shells
+    int absorbed        = 0;   // crumbs merged back into a neighbour
 
     QString clipReport;        // whatever MeshDivider had to say
 

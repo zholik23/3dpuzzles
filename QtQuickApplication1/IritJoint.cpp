@@ -2,6 +2,7 @@
 
 #include "IritGuard.h"
 #include "IritMesh.h"
+#include "IritSolid.h"
 
 extern "C" {
 #include "inc_irit/cagd_lib.h"
@@ -20,84 +21,14 @@ constexpr double kPi = 3.14159265358979323846;
 // its plane equation set. Booleans need that plane, so IritPrsrUpdatePolyPlane
 // is not optional - a polygon without one is silently skipped.
 
-// Signed volume by the divergence theorem: positive when the mesh is wound
-// outward, negative when it is wound inward.
-double signedVolume(const MeshData &m)
+// The mesh-to-IRIT conversion and the list closing live in IritSolid now: the
+// cage-vs-model intersection needs exactly the same two fixes, and one copy is
+// better than two that can drift apart.
+using IritSolid::closeLists;
+using IritSolid::signedVolume;
+static IritPrsrObjectStruct *meshToIrit(const MeshData &m)
 {
-    double v = 0.0;
-    for (int t = 0; t + 2 < m.tris.size(); t += 3) {
-        const float *a = &m.pos[m.tris[t + 0] * 3];
-        const float *b = &m.pos[m.tris[t + 1] * 3];
-        const float *c = &m.pos[m.tris[t + 2] * 3];
-        v += double(a[0]) * (double(b[1]) * double(c[2]) - double(b[2]) * double(c[1]))
-           - double(a[1]) * (double(b[0]) * double(c[2]) - double(b[2]) * double(c[0]))
-           + double(a[2]) * (double(b[0]) * double(c[1]) - double(b[1]) * double(c[0]));
-    }
-    return v / 6.0;
-}
-
-IritPrsrObjectStruct *meshToIrit(const MeshData &m)
-{
-    IritPrsrPolygonStruct *head = NULL;
-
-    // IRIT decides inside from outside by the polygon winding - that is what
-    // IritPrsrUpdatePolyPlane turns into the plane equation the booleans use.
-    // The divider hands out INWARD-wound pieces (measured: a piece of the test
-    // cube has signed volume -45.4), and feeding those in inside-out makes a
-    // union behave like a bite: the cube lost 31% of its material this way.
-    // Rather than assume either convention, measure and flip when needed.
-    const bool flip = signedVolume(m) < 0.0;
-
-    for (int t = 0; t + 2 < m.tris.size(); t += 3) {
-        const int i0 = 0, i1 = flip ? 2 : 1, i2 = flip ? 1 : 2;
-        const float *p[3] = { &m.pos[m.tris[t + i0] * 3],
-                              &m.pos[m.tris[t + i1] * 3],
-                              &m.pos[m.tris[t + i2] * 3] };
-
-        IritPrsrVertexStruct *v2 = IritPrsrAllocVertex2(NULL);
-        IritPrsrVertexStruct *v1 = IritPrsrAllocVertex2(v2);
-        IritPrsrVertexStruct *v0 = IritPrsrAllocVertex2(v1);
-        IritPrsrVertexStruct *v[3] = { v0, v1, v2 };
-        (void)v2;
-
-        for (int k = 0; k < 3; ++k)
-            for (int c = 0; c < 3; ++c)
-                v[k] -> Coord[c] = IrtRType(p[k][c]);
-
-        IritPrsrPolygonStruct *poly = IritPrsrAllocPolygon(0, v0, head);
-        if (!IritPrsrUpdatePolyPlane(poly)) {
-            // Degenerate triangle: no plane, so no use to a boolean. Dropping
-            // it is right - keeping it would poison the whole operation. The
-            // list is still linear here, so freeing it terminates.
-            poly -> PVertex = NULL;
-            IritPrsrFreeVertexList(v0);
-            IritPrsrFreePolygon(poly);
-            continue;
-        }
-        head = poly;
-    }
-
-    if (head == NULL)
-        return NULL;
-
-    // The booleans build adjacencies, and that needs every vertex list CLOSED
-    // back on itself. A NULL-terminated list is rejected outright with
-    // "Vertex list must be circular for proper adjacencies". Done here, after
-    // the planes, so the failure path above still walks a linear list to free.
-    IritPrsrOpenPolysToClosed(head);
-    return IritPrsrGenPOLYObject(head);
-}
-
-// IRIT's booleans build vertex adjacencies, and that needs every vertex list
-// closed back on itself. Objects that come out of the tessellator, out of a
-// transform copy, or out of a previous boolean can all be open, so this is
-// applied defensively to both operands before every operation rather than once
-// at the start.
-void closeLists(IritPrsrObjectStruct *o)
-{
-    for (; o != NULL; o = o -> Pnext)
-        if (IRIT_PRSR_IS_POLY_OBJ(o) && o -> U.Pl != NULL)
-            IritPrsrOpenPolysToClosed(o -> U.Pl);
+    return IritSolid::fromMesh(m, IritSolid::Winding::Outward);
 }
 
 // ------------------------------------------------------------- the joint ---

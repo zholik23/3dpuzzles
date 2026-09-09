@@ -302,3 +302,31 @@ Trivariate Trivariate::fromFile(const QString &path, QString *error)
 
     return adopt(copy, fi.fileName());
 }
+bool Trivariate::saveToFile(const QString& path, QString* error) const
+{
+    if (!m_tv) {
+        if (error) *error = QStringLiteral("Trivariate is invalid.");
+        return false;
+    }
+
+    int handler = IritPrsrOpenDataFile(path.toUtf8().constData(), FALSE, FALSE);
+    if (handler < 0) {
+        if (error) *error = QStringLiteral("Could not open file for writing: %1").arg(path);
+        return false;
+    }
+
+    IritPrsrObjectStruct* pObj = IritPrsrGenTRIVARObject(IritTrivTVCopy(static_cast<TrivTVStruct*>(m_tv)));
+    if (pObj == NULL) {
+        IritTrivTVFree(static_cast<TrivTVStruct*>(m_tv));
+        if (error) *error = QStringLiteral("Could not wrap the trivariate.");
+        return false;
+    }
+
+    IritPrsrPutObjectToHandler(handler, pObj);
+    IritPrsrFreeObject(pObj);
+    IritPrsrCloseStream(handler, TRUE);
+
+    return true;
+}
+
+
