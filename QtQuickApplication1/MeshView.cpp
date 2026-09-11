@@ -223,18 +223,37 @@ void MeshView::resetView()
 
 // -------------------------------------------------------------- projection --
 
+void MeshView::setFixedBounds(const float bmin[3], const float bmax[3])
+{
+    for (int k = 0; k < 3; ++k) {
+        m_fixMin[k] = bmin[k];
+        m_fixMax[k] = bmax[k];
+    }
+    m_fixedBounds = true;
+    update();
+}
+
+void MeshView::clearFixedBounds()
+{
+    m_fixedBounds = false;
+    update();
+}
+
 void MeshView::projectVertices(int w, int h)
 {
     if (m_parts.isEmpty())
         return;
 
+    const float *lo = m_fixedBounds ? m_fixMin : m_bmin;
+    const float *hi = m_fixedBounds ? m_fixMax : m_bmax;
+
     float centre[3];
     for (int k = 0; k < 3; ++k)
-        centre[k] = 0.5f * (m_bmin[k] + m_bmax[k]);
+        centre[k] = 0.5f * (lo[k] + hi[k]);
 
-    const float dx = m_bmax[0] - m_bmin[0];
-    const float dy = m_bmax[1] - m_bmin[1];
-    const float dz = m_bmax[2] - m_bmin[2];
+    const float dx = hi[0] - lo[0];
+    const float dy = hi[1] - lo[1];
+    const float dz = hi[2] - lo[2];
     float radius = 0.5f * std::sqrt(dx * dx + dy * dy + dz * dz);
     if (!(radius > 1e-12f))
         radius = 1.0f;

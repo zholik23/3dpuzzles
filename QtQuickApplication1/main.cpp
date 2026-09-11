@@ -4,6 +4,8 @@
 #include <functional>
 
 #include "CageBoolean.h"
+#include <QElapsedTimer>
+
 #include "MaterialField.h"
 #include "PieceExport.h"
 #include "IritSolid.h"
@@ -712,6 +714,169 @@ static int assembleCli(const QStringList &a)
 // Elber Section 5 end to end:  --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png]
 // Wraps the model in a bounding-cage trivariate, divides the cage, then
 // intersects each boxy cage piece with the original model.
+// --field MODEL [RES ...] : how the voxel measurement converges with
+// resolution, and what it costs. No booleans, so it runs in seconds.
+static int fieldCli(const QStringList &a)
+{
+    if (a.isEmpty()) {
+        std::printf("usage: --field MODEL [RES ...]\n");
+        return 2;
+    }
+    MeshData model;
+    QString err;
+    if (!CadLoader::load(a.at(0), &model, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+
+    // The reference the voxels are trying to match.
+    const double exact = qAbs(IritSolid::signedVolume(model));
+    double ext[3];
+    for (int k = 0; k < 3; ++k)
+        ext[k] = double(model.bmax[k]) - double(model.bmin[k]);
+    std::printf("MODEL %s  bbox %.4g x %.4g x %.4g  exact volume %.6g\n",
+                qPrintable(QFileInfo(a.at(0)).fileName()),
+                ext[0], ext[1], ext[2], exact);
+    std::printf("%-6s %-22s %12s %14s %10s %8s\n",
+                "res", "grid", "cubes", "measured vol", "error", "ms");
+
+    QVector<int> list;
+    for (int i = 1; i < a.size(); ++i) {
+        bool ok = false;
+        const int v = a.at(i).toInt(&ok);
+        if (ok) list.append(v);
+    }
+    if (list.isEmpty())
+        list = { 8, 12, 16, 24, 32, 48, 64, 96, 128, 160, 192 };
+
+    for (int res : list) {
+        QElapsedTimer t;
+        t.start();
+        const MaterialField f = MaterialField::build(model, res);
+        const qint64 ms = t.elapsed();
+        if (!f.isValid())
+            continue;
+        const double vol = f.total();
+        // Does the grid still see the model as ONE body? A cube coarser than a
+        // limb makes that limb vanish, and the model falls apart in the grid
+        // even though the mesh is perfectly connected. Aggregate volume can
+        // stay accurate while this is already broken, so it is checked apart.
+        const double lo[3] = { 0.0, 0.0, 0.0 };
+        const double hi[3] = { ext[0], ext[1], ext[2] };
+        const bool whole = f.isConnected(lo, hi);
+
+        std::printf("%-6d %-22s %12d %14.6g %9.2f%% %9.3f %8lld  %s\n",
+                    res,
+                    qPrintable(QStringLiteral("%1 x %2 x %3")
+                        .arg(f.dim(0)).arg(f.dim(1)).arg(f.dim(2))),
+                    f.cellCount(), vol,
+                    100.0 * (vol - exact) / qMax(1e-9, exact),
+                    f.side(0), (long long)ms,
+                    whole ? "one body" : "FALLS APART");
+        std::fflush(stdout);
+    }
+    return 0;
+}
+
+// --shot MODEL N SEED WHAT OUT.png : one render, camera pinned to the cage box
+// so every WHAT registers pixel-for-pixel with every other.
+//   WHAT = model | cells | pieces | cell:K | piece:K
+static int shotCli(const QStringList &a)
+{
+    if (a.size() < 5) {
+        std::printf("usage: --shot MODEL N SEED WHAT OUT.png\n");
+        return 2;
+    }
+    MeshData model;
+    QString err;
+    if (!CadLoader::load(a.at(0), &model, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+    const int n    = a.at(1).toInt();
+    const int seed = a.at(2).toInt();
+    const QString what = a.at(3);
+    const QString out  = a.at(4);
+
+    Trivariate cage = Trivariate::boundingCage(model, &err);
+    if (!cage.isValid()) { std::printf("FAIL  %s\n", qPrintable(err)); return 1; }
+
+    double dom[6];
+    cage.domain(dom);
+    double ext[3];
+    for (int k = 0; k < 3; ++k)
+        ext[k] = qMax(1e-9, double(model.bmax[k]) - double(model.bmin[k]));
+    const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
+
+    const MaterialField field = MaterialField::build(model);
+    const QVector<CellBox> world =
+        PuzzleDivider::buildBspCells(wdom, qMax(1, n), 0.35, quint32(seed), 0.0,
+                                     field.isValid() ? &field : nullptr);
+    QVector<CellBox> cells;
+    for (const CellBox &w : world) {
+        CellBox c;
+        for (int k = 0; k < 3; ++k) {
+            const double lo = dom[k * 2], span = dom[k * 2 + 1] - lo;
+            c.lo[k] = lo + span * (w.lo[k] / ext[k]);
+            c.hi[k] = lo + span * (w.hi[k] / ext[k]);
+        }
+        cells.append(c);
+    }
+
+    QVector<PuzzlePiece> pieces;
+    QString warn;
+    if (!PuzzleDivider::divideCells(cage, cells, 12.0, &pieces, &warn)) {
+        std::printf("FAIL  %s\n", qPrintable(warn));
+        return 1;
+    }
+
+    const bool wantTrimmed = what.startsWith(QStringLiteral("piece"));
+    if (wantTrimmed)
+        CageBoolean::intersectAll(&pieces, model, 12.0);
+
+    QVector<PuzzlePiece> show;
+    if (what == QStringLiteral("model")) {
+        PuzzlePiece p;
+        p.mesh = model;
+        show.append(p);
+    } else if (what.contains(QLatin1Char(':'))) {
+        const int k = what.section(QLatin1Char(':'), 1).toInt();
+        if (k < 0 || k >= pieces.size()) {
+            std::printf("FAIL  index %d of %d\n", k, int(pieces.size()));
+            return 1;
+        }
+        show.append(pieces.at(k));
+    } else {
+        show = pieces;
+    }
+
+    MeshView v;
+    v.setWidth(1100);
+    v.setHeight(1100);
+    v.setPieces(show);
+    v.setExplode(0.0);
+    v.setYaw(28);
+    v.setPitch(-14);
+    // Shaded only. The wireframe overlay is high-frequency detail that survives
+    // any fade, so a ghosted model drawn with edges reads as speckle and fights
+    // the piece laid over it.
+    v.setShaded(true);
+    v.setShowEdges(false);
+    // Pinned to the CAGE, so a single cell and the whole model land in the same
+    // place at the same scale and can be composited.
+    const float bmin[3] = { model.bmin[0], model.bmin[1], model.bmin[2] };
+    const float bmax[3] = { model.bmax[0], model.bmax[1], model.bmax[2] };
+    v.setFixedBounds(bmin, bmax);
+
+    QImage img(1100, 1100, QImage::Format_ARGB32);
+    img.fill(Qt::white);
+    { QPainter pr(&img); v.paint(&pr); }
+    std::printf(img.save(out) ? "SHOT  %s (%s)\n" : "FAIL  %s (%s)\n",
+                qPrintable(out), qPrintable(what));
+    std::fflush(stdout);
+    return 0;
+}
+
 static int cageCli(const QStringList &a)
 {
     if (a.isEmpty()) {
@@ -745,7 +910,22 @@ static int cageCli(const QStringList &a)
         ext[a] = qMax(1e-9, double(model.bmax[a]) - double(model.bmin[a]));
     const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
 
-    const MaterialField field = MaterialField::build(model);
+    // Resolution is overridable so the choice of 96 can be justified by
+    // measurement rather than asserted.
+    const int res = qEnvironmentVariableIsSet("MATFIELD_RES")
+                        ? qEnvironmentVariableIntValue("MATFIELD_RES") : 96;
+    QElapsedTimer fieldTimer;
+    fieldTimer.start();
+    const MaterialField field = MaterialField::build(model, res);
+    const qint64 fieldMs = fieldTimer.elapsed();
+    if (field.isValid())
+        std::printf("GRID  res %d -> %d x %d x %d = %d voxels (%d inside, %.1f%%)"
+                    " · side %.4g · built in %lld ms\n",
+                    res, field.dim(0), field.dim(1), field.dim(2),
+                    field.cellCount(), field.filledCount(),
+                    100.0 * field.filledCount() / qMax(1, field.cellCount()),
+                    field.side(0), (long long)fieldMs);
+
     const QVector<CellBox> world =
         PuzzleDivider::buildBspCells(wdom, qMax(1, n), 0.35, quint32(seed), 0.0,
                                      field.isValid() ? &field : nullptr);
@@ -940,6 +1120,14 @@ int main(int argc, char *argv[])
         const int p = args.indexOf(QStringLiteral("--probe"));
         if (p >= 0)
             return probe(args.mid(p + 1));
+
+        const int sh = args.indexOf(QStringLiteral("--shot"));
+        if (sh >= 0)
+            return shotCli(args.mid(sh + 1));
+
+        const int fl = args.indexOf(QStringLiteral("--field"));
+        if (fl >= 0)
+            return fieldCli(args.mid(fl + 1));
 
         const int cg = args.indexOf(QStringLiteral("--cage"));
         if (cg >= 0)

@@ -41,6 +41,14 @@ class MeshView : public QQuickPaintedItem {
 public:
     explicit MeshView(QQuickItem *parent = nullptr);
 
+    // Pins the camera to a given box instead of fitting it to whatever is
+    // currently loaded. Needed to render SUBSETS that must register with each
+    // other - one cage cell and the whole model have very different extents, so
+    // without this the two images would be at different scales and could not be
+    // overlaid.
+    void setFixedBounds(const float bmin[3], const float bmax[3]);
+    void clearFixedBounds();
+
     void setMesh(const MeshData &mesh);              // single part, no explode
     void setPieces(const QVector<PuzzlePiece> &pieces);
     void clearMesh();
@@ -105,6 +113,9 @@ private:
     qreal m_pitch   = -25.0;
     qreal m_zoom    = 1.0;
     qreal m_explode = 0.0;
+    bool   m_fixedBounds = false;
+    float  m_fixMin[3] = { 0, 0, 0 };
+    float  m_fixMax[3] = { 0, 0, 0 };
     bool  m_shaded    = true;
     bool  m_showEdges = true;
 

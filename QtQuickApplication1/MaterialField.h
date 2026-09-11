@@ -33,6 +33,19 @@ public:
     // voxel grid, which is ample for deciding where to cut.
     double volumeIn(const double lo[3], const double hi[3]) const;
 
+    // Grid shape, for reporting. The resolution is FIXED on the longest axis;
+    // the other two scale with the model's proportions so voxels stay cubic, so
+    // the total count depends on the model's bounding box, not on the model.
+    int    dim(int axis)  const { return m_n[axis]; }
+    double side(int axis) const { return m_cell[axis]; }
+    int    cellCount()    const { return m_n[0] * m_n[1] * m_n[2]; }
+    int    filledCount()  const
+    {
+        int n = 0;
+        for (quint8 v : m_occ) n += v ? 1 : 0;
+        return n;
+    }
+
     // Voxel volume - the granularity of any answer above.
     double voxelVolume() const { return m_cell[0] * m_cell[1] * m_cell[2]; }
 
