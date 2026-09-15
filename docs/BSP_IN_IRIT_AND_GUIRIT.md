@@ -122,6 +122,22 @@ which is exactly the shape of a BSP puzzle function.
 
 ## 4. Step 0 — a Qt-free core
 
+**Where the core lives.** Two new files, `PuzBspCore.h` and `PuzBspCore.c`.
+Create them in the plugin's folder first,
+`C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\` — make the folder now if §5.1 has
+not been done yet. If you later do Route B, **move** both files into
+`C:\irit\irit\ext_lib\` (§6), so only one copy ever exists.
+
+**How to read the code blocks.** Every block in §4–§8 carries one of these
+labels:
+
+| Label | Meaning |
+|---|---|
+| **NEW FILE** | create this file; the block is its content, or the part named |
+| **EDIT FILE** | the file already exists; add exactly what the label says, where it says |
+| **RUN** | a command to type, not file content |
+| **REFERENCE** | shown to explain; do not paste it anywhere |
+
 ### 4.1 What to port, and what not to
 
 Port only the **decision** — where to cut. IRIT already owns the geometry:
@@ -164,6 +180,9 @@ IRIT you work on IRIT's own objects and most of that problem does not arise
 
 Carry these two lines across **verbatim** — each one fixed a measured failure:
 
+**NEW FILE** · `PuzBspCore.c` (created in §4.4) · inside `PuzBspFieldBuild()`,
+at the same two places they sit in `MaterialField::build`
+
 ```c
 /* MaterialField.cpp:72 - sample off the voxel centre, or a UV sphere's
    meridians leave an empty curtain of columns that splits the model. */
@@ -180,6 +199,9 @@ The voxel fill only needs triangles. The structure fields were checked in
 `inc_irit\iritprsr.h`: an object's `U.Pl` is a `Pnext` chain of
 `IritPrsrPolygonStruct` (line 425); each polygon's `PVertex` is a `Pnext` chain
 of `IritPrsrVertexStruct` (line 377) holding `Coord`.
+
+**NEW FILE** · `PuzBspCore.c` · near the top, below the `#include` lines. It is
+`static`: used only inside this file.
 
 ```c
 /* Fan-triangulates every polygon of a polygonal object. */
@@ -225,6 +247,8 @@ Two notes on correctness:
 
 ### 4.4 The core's interface
 
+**NEW FILE** · `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\PuzBspCore.h` · the whole file
+
 ```c
 /* PuzBspCore.h - shared by the plugin (Route A) and ext_lib (Route B). */
 
@@ -259,10 +283,31 @@ TrivTVStruct *PuzBspCellToTV(const TrivTVStruct *Cage,
                              const PuzBspCellStruct *Cell,
                              const IrtRType ModelExt[3]);
 
+/* One cell as a polygonal box in world coordinates: the live preview in
+   GuIrit, and the Boolean operand when trimming.  Body: step 1 of 5.6.    */
+IritPrsrObjectStruct *PuzBspCellBox(const PuzBspCellStruct *Cell,
+                                    const IrtRType ModelMin[3]);
+
+/* All pieces as one list object.  Output: 0 = cell boxes,
+   1 = sub-trivariates, 2 = pieces trimmed to the model (Elber Section 5).
+   Spacing moves pieces apart; 0 keeps them assembled.  Body: 5.6.        */
+IritPrsrObjectStruct *PuzBspMakePieces(const IritPrsrObjectStruct *Model,
+                                       const PuzBspCellStruct *Cells,
+                                       int n,
+                                       const IrtRType ModelMin[3],
+                                       const IrtRType ModelExt[3],
+                                       int Output,
+                                       IrtRType Spacing,
+                                       const char *Name);
+
 #if defined(__cplusplus) || defined(c_plusplus)
 }
 #endif
 ```
+
+**NEW FILE** · `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\PuzBspCore.c` · starts with
+`#include "PuzBspCore.h"`, then the `static` helpers from §4.2–4.3, then the
+body of every function declared above.
 
 For `PuzBspCellToTV`, take the argument order of `IritTrivTVDomain`
 (`triv_lib.h:509`) from `Trivariate::domain` in the Qt app rather than from
@@ -280,6 +325,30 @@ both must link the same symbols.
 
 Modelled line for line on `GuIritDllPuzzles`, which is the closest working
 example on the machine.
+
+**Files for this route**
+
+| Action | File | Section |
+|---|---|---|
+| create folder | `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\` | 5.1 |
+| create | `…\GuIritDllBspPuzzle\GuIritDllBspPuzzle.cpp` | 5.3 – 5.7 |
+| create | `…\GuIritDllBspPuzzle\GuIritDllBspPuzzle.def` | 5.2 |
+| create | `…\GuIritDllBspPuzzle\PuzBspCore.h` and `PuzBspCore.c` | 4, 5.6 |
+| create — copy an icon, redraw it | `…\GuIritDllBspPuzzle\Icons\IconBspPuzzle.xpm` | 5.3 |
+| create — copy a project, edit it | `C:\irit\extra\guirit\Src\WindowsVC2026\GuIritDllBspPuzzle\GuIritDllBspPuzzle.vcxproj` | 5.1 |
+| edit — add the project | `C:\irit\extra\guirit\Src\WindowsVC2026\GuIrit.sln` | 5.1 |
+| edit — optional | `C:\irit\extra\guirit\Src\RunTime\GuIritData\GuIritinit.irt` | 5.8 |
+
+Nothing in Elber's plugins or in IRIT itself is edited on this route.
+
+**Order inside `GuIritDllBspPuzzle.cpp`**, top to bottom — C++ needs each thing
+declared before it is used:
+
+1. the `#include` lines and the icon include (§5.3)
+2. the callback's forward declaration and the table (§5.3)
+3. the local-data class (§5.4)
+4. the callback (§5.5)
+5. `_IrtMdlrDllRegister` (§5.7)
 
 ### 5.1 Create the project
 
@@ -310,7 +379,8 @@ fine in a `.vcxproj`.
 
 ### 5.2 The export file
 
-`GuIritDllBspPuzzle.def` — identical to every plugin's:
+**NEW FILE** · `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\GuIritDllBspPuzzle.def` · the whole file,
+identical to every plugin's:
 
 ```
 EXPORTS
@@ -322,6 +392,9 @@ _IrtMdlrDllRegister
 `IrtMdlrFuncTableStruct` (`GuIrit\Modeler\IrtMdlr.h:376`) describes one button:
 its id, name prefix, icon, string id, names, help, callback, flags, return type
 and parameters.
+
+**NEW FILE** · `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\GuIritDllBspPuzzle.cpp` · the top of the file
+(items 1–2 of the order above)
 
 ```cpp
 #include "IrtDspBasicDefs.h"
@@ -374,6 +447,8 @@ fields start at 1, in the same order as the table row. This mirrors
 `IrtMdlrPuzzleLinearSliceLclClass` (`GuIritDllPuzzles.h:41-80`), including the
 member types.
 
+**NEW FILE, continued** · `GuIritDllBspPuzzle.cpp` · directly below the table
+
 ```cpp
 IRT_DSP_STATIC_DATA const char
     *IrtMdlrBspOutputStr = "Cells;Sub-trivariates;Trimmed pieces";
@@ -415,6 +490,8 @@ The pattern is `IrtMdlrPuzzleLinearSlice` (`GuIritDllPuzzles.cpp:698`) and
 `IrtMdlrPuzBooleansAndFinish` (`:644`): set input domains on the first
 invocation; **preview cheaply** while the user edits; do the expensive Booleans
 only on **OK** or **Apply**.
+
+**NEW FILE, continued** · `GuIritDllBspPuzzle.cpp` · below the local-data class
 
 ```cpp
 static void IrtMdlrBspPuzzle(IrtMdlrFuncInfoClass *FI)
@@ -493,22 +570,15 @@ the prototypes are in `GuIritDllExtensions\GuIritDllExtensions.h` —
 
 ### 5.6 Making the pieces
 
-```cpp
-/* Output: 0 = cell boxes, 1 = sub-trivariates, 2 = pieces trimmed to the
-   model (Elber Section 5).                                                  */
-static IritPrsrObjectStruct *PuzBspMakePieces(const IritPrsrObjectStruct *Model,
-                                              const PuzBspCellStruct *Cells,
-                                              int n,
-                                              const IrtRType ModelMin[3],
-                                              const IrtRType ModelExt[3],
-                                              int Output,
-                                              IrtRType Spacing,
-                                              const char *Name);
-```
+**NEW FILE** · `PuzBspCore.c` · the bodies of `PuzBspMakePieces` and
+`PuzBspCellBox`, both already declared in `PuzBspCore.h` (§4.4). They live in the
+core rather than in the plugin so Route B uses them unchanged — do **not** make
+them `static`.
 
 What it does, step by step:
 
-1. **Cell box as polygons.** `IritGeomPrimGenBOXObject(Pt, WidthX, WidthY,
+1. **Cell box as polygons** — this is the body of `PuzBspCellBox`.
+   `IritGeomPrimGenBOXObject(Pt, WidthX, WidthY,
    WidthZ)` (`geom_lib.h:1203`) with `Pt = ModelMin + Cell.Lo` and widths
    `Cell.Hi − Cell.Lo`. IRIT's primitives can come out polygonal or freeform;
    the switch is `IritGeomPrimSetGeneratePrimType` (`geom_lib.h:1200`), which
@@ -546,6 +616,8 @@ A failed Boolean must fail **locally**: log which piece and why with
 
 ### 5.7 Registration
 
+**NEW FILE, continued** · `GuIritDllBspPuzzle.cpp` · the end of the file
+
 ```cpp
 extern "C" bool _IrtMdlrDllRegister(void)
 {
@@ -577,6 +649,10 @@ each have zero matches in `GuIritinit.irt`, while Trivariate entries such as
 Add one only after Route B exists, so it has something to call. Match its
 parameter list to what GuIrit actually logs — run the panel once and copy the
 logged line, rather than guessing whether the name field is included.
+
+**EDIT FILE** (optional) ·
+`C:\irit\extra\guirit\Src\RunTime\GuIritData\GuIritinit.irt` · append the
+`GuIrit_BspPzl = function( ... ): ...` definition at the end of the file.
 
 > ⚠️ **Edit the source copy.** `C:\irit\GuIritSetup2026.bat` robocopies
 > `C:\irit\extra\guirit\Src\RunTime\GuIritData` over the installed
@@ -615,9 +691,27 @@ relink of `GuIrit64.exe`.
 
 The result is a script function:
 
+**REFERENCE** · how it will be called from any `.irt` script once built; not a file
+
 ```
 Pieces = PUZBSP( Model, NumPieces, VoxelRes, Output );
 ```
+
+**Files for this route**
+
+| Action | File | Section |
+|---|---|---|
+| create | `C:\irit\irit\ext_lib\puzbsp.c` | 6.1 |
+| move here from the plugin folder | `C:\irit\irit\ext_lib\PuzBspCore.h` and `PuzBspCore.c` | 4 |
+| edit | `C:\irit\irit\inc_irit\ext_lib.h` | 6.2 |
+| edit | `C:\irit\irit\windowsVC2026\ext_lib\ext_lib.vcxproj` | 6.3 |
+| edit | `C:\irit\irit\ext_lib\makefile.wnt` and `Makefile.am` | 6.3 |
+| edit | `C:\irit\irit\irit\inptprsl.h` | 6.4 |
+| edit | `C:\irit\irit\irit\inptevl0.c` | 6.5 |
+| edit, then run `make_defs.cmd` | `C:\irit\irit\dll_defs\irit_all_dll_defs.txt` | 6.6 |
+| edit — plugin: drop its copy of `PuzBspCore.c`, include `"ext_lib/PuzBspCore.h"` | `GuIritDllBspPuzzle.vcxproj`, `GuIritDllBspPuzzle.cpp` | 6.6 |
+| create | `C:\irit\irit\scripts\puzbsp_test.irt` | 6.8 |
+| edit | `C:\irit\irit\docs\irit.src` | 6.9 |
 
 ### 6.1 The C function
 
@@ -625,6 +719,8 @@ New file `C:\irit\irit\ext_lib\puzbsp.c`. Interpreter functions receive numbers
 as `IrtRType *` and objects as `IritPrsrObjectStruct *`, and return a new object
 or `NULL` — compare `RegionFromTrivarObject` (`irit\freefrm4.c:786`), the C side
 of `TREGION`.
+
+**NEW FILE** · `C:\irit\irit\ext_lib\puzbsp.c` · the whole file
 
 ```c
 /******************************************************************************
@@ -694,8 +790,9 @@ from ext_lib.
 
 ### 6.2 Declare it
 
-`C:\irit\irit\inc_irit\ext_lib.h`, inside the existing `extern "C"` block, beside
-the example at line 33:
+**EDIT FILE** · `C:\irit\irit\inc_irit\ext_lib.h` · inside the existing
+`extern "C"` block. The first line below is already there (line 33); **add the
+lines under it**:
 
 ```c
 void IritExtExampleFunction(IrtRType *R, IrtVecType V);
@@ -708,17 +805,18 @@ IritPrsrObjectStruct *IritExtPuzBsp(IritPrsrObjectStruct *PolyObj,
 
 ### 6.3 Compile it into ext_lib
 
-- **Visual Studio:** add `..\..\ext_lib\puzbsp.c` and `..\..\ext_lib\PuzBspCore.c`
+- **EDIT FILE** `C:\irit\irit\windowsVC2026\ext_lib\ext_lib.vcxproj` (Visual Studio): add `..\..\ext_lib\puzbsp.c` and `..\..\ext_lib\PuzBspCore.c`
   as `ClCompile` entries in `windowsVC2026\ext_lib\ext_lib.vcxproj`, next to
   `..\..\ext_lib\explfunc.c`.
-- **nmake:** extend `OBJS = explfunc.$(IRIT_OBJ_PF)` in `ext_lib\makefile.wnt`.
-- **Unix:** `ext_lib\Makefile.am`.
+- **EDIT FILE** `C:\irit\irit\ext_lib\makefile.wnt` (nmake): extend `OBJS = explfunc.$(IRIT_OBJ_PF)` in `ext_lib\makefile.wnt`.
+- **EDIT FILE** `C:\irit\irit\ext_lib\Makefile.am` (Unix builds only): add both `.c` files.
 
 ### 6.4 Give it a token
 
-`C:\irit\irit\irit\inptprsl.h`. It returns an object, so it belongs in
-`ObjValueFuncType`. Append **as the last entry**, after `IP_JOINCRVCRV` and
-before `IRIT_PRSR_OBJ_VAL_LAST` (the enum closes at line 783):
+**EDIT FILE** · `C:\irit\irit\irit\inptprsl.h` · **add one line**, `IP_PUZBSP,`.
+It returns an object, so it belongs in `ObjValueFuncType`: put it last, after
+`IP_JOINCRVCRV,` and before `IRIT_PRSR_OBJ_VAL_LAST` (the enum closes at line
+783). The other lines are shown only so you can find the spot:
 
 ```c
     IP_HOTWIRECUT,
@@ -734,9 +832,10 @@ Capacity is not a problem: object tokens run from `IRIT_PRSR_OBJ_FUNC_OFFSET`
 
 ### 6.5 Add the table row
 
-`C:\irit\irit\irit\inptevl0.c`, `ObjFuncTable[]` (starts at line 96). Append **as
-the last row** — after `JOINCRVCRV`, which is currently last — and add the comma
-the old last row now needs:
+**EDIT FILE** · `C:\irit\irit\irit\inptevl0.c` · `ObjFuncTable[]`, which starts at
+line 96. Two changes: **add a comma** at the end of the existing `JOINCRVCRV` row
+(currently the last row), then **add the `PUZBSP` row** under it, before `};`.
+The first line below is that existing row with its new comma:
 
 ```c
     { IPNP(JOINCRVCRV), IPNP2(IritJointCrvCrv3D),     7,        { CURVE_EXPR,  CURVE_EXPR, NUMERIC_EXPR, NUMERIC_EXPR, NUMERIC_EXPR, NUMERIC_EXPR, NUMERIC_EXPR }, CURVE_EXPR },
@@ -773,10 +872,10 @@ working example of a function that returns `OLST_EXPR`.
 builds fine. That is why `IritExtExampleFunction` is already listed as an export
 (`dll_defs\irit_all_dll_defs.txt:3732`).
 
-1. Add `IritExtPuzBsp` — and `PuzBspBuildCells` / `PuzBspMakePieces` if the
+1. **EDIT FILE** · add `IritExtPuzBsp` — and `PuzBspBuildCells` / `PuzBspMakePieces` if the
    plugin should call them through the DLL — to
    `C:\irit\irit\dll_defs\irit_all_dll_defs.txt`.
-2. Regenerate the `.def` files: `dll_defs\make_defs.cmd C:\irit\irit\dll_defs`.
+2. **RUN** · regenerate the `.def` files: `dll_defs\make_defs.cmd C:\irit\irit\dll_defs`.
    It rebuilds `irit.def`, `irit64.def`, `iritD64.def`, `iritP64.def` from that
    list and moves them up one directory. **Do not edit `irit64.def` by hand** —
    the next regeneration discards it.
@@ -805,6 +904,11 @@ overwrites them with no prompt.
 `C:\irit\irit\windowsVC2026\ntbin64`, and **run test scripts with a timeout**:
 after any error IRIT drops to its prompt, and with stdin at end-of-file it
 prints `Irit> ` forever.
+
+**NEW FILE** · `C:\irit\irit\scripts\puzbsp_test.irt` · the whole file.
+**RUN** · start `irit64.exe`, then at the `Irit>` prompt type
+`chdir( "c:/irit/irit/scripts" ); include( "puzbsp_test.irt" );` — the same
+`chdir` and `include` that GuIrit's own `Scripts\test.irt` uses.
 
 ```
 # puzbsp_test.irt
@@ -849,6 +953,8 @@ on small piece counts.
 
 The one primitive it needs:
 
+**NEW FILE** · `C:\irit\irit\scripts\bsp_puzzle.irt` · the start of the file
+
 ```
 # Material inside an axis-aligned box: Boolean AND, then volume.
 MaterialIn = function( Model, Lo, Hi ):
@@ -862,6 +968,9 @@ on it to cut its joints. `coord( V, i )` is used the same way in the shipped
 scripts.
 
 The loop, in outline — the same three decisions as the C core:
+
+**REFERENCE** · an outline, not code — write the real loop below `MaterialIn` in
+the same `bsp_puzzle.irt`
 
 ```
 # 1. leaf  = the cell with the most material        (MaterialIn on each)
@@ -897,6 +1006,8 @@ constant. Check the constant names for trivariates in the `TREGION` manual entry
 
 No code in IRIT at all. The Qt app already divides, trims and writes IRIT's
 native format with one named object per piece.
+
+**RUN** · in a terminal, in the folder that holds `QtQuickApplication1.exe`
 
 ```
 QtQuickApplication1.exe --cage model.stl 8 7 --save pieces.itd
@@ -956,30 +1067,30 @@ Only after step 6 does a GuIrit screenshot mean anything.
 
 ### Route A — GuIrit panel
 
-| File | Change |
+| File | Action |
 |---|---|
-| `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\GuIritDllBspPuzzle.cpp` | new — table, local-data class, callback, registration |
-| `…\GuIritDllBspPuzzle\GuIritDllBspPuzzle.def` | new — `EXPORTS _IrtMdlrDllRegister` |
-| `…\GuIritDllBspPuzzle\PuzBspCore.c` / `PuzBspCore.h` | new — the shared algorithm |
-| `…\GuIritDllBspPuzzle\Icons\IconBspPuzzle.xpm` | new |
-| `…\Src\WindowsVC2026\GuIritDllBspPuzzle\GuIritDllBspPuzzle.vcxproj` | new — copied from Puzzles, with a new GUID |
-| `…\Src\WindowsVC2026\GuIrit.sln` | add the project |
-| `…\Src\RunTime\GuIritData\GuIritinit.irt` | optional `GuIrit_BspPzl` wrapper, after Route B |
+| `C:\irit\extra\guirit\Src\GuIritDllBspPuzzle\GuIritDllBspPuzzle.cpp` | **create** — table, local-data class, callback, registration |
+| `…\GuIritDllBspPuzzle\GuIritDllBspPuzzle.def` | **create** — `EXPORTS _IrtMdlrDllRegister` |
+| `…\GuIritDllBspPuzzle\PuzBspCore.c` / `PuzBspCore.h` | **create** — the shared algorithm (moves to `ext_lib` on Route B) |
+| `…\GuIritDllBspPuzzle\Icons\IconBspPuzzle.xpm` | **create** — copy an existing icon and redraw it |
+| `…\Src\WindowsVC2026\GuIritDllBspPuzzle\GuIritDllBspPuzzle.vcxproj` | **create** — a copy of the Puzzles project, with a new GUID |
+| `…\Src\WindowsVC2026\GuIrit.sln` | **edit** — add the project |
+| `…\Src\RunTime\GuIritData\GuIritinit.irt` | **edit**, optional — append a `GuIrit_BspPzl` wrapper, after Route B |
 
 ### Route B — IRIT built-in
 
-| File | Change |
+| File | Action |
 |---|---|
-| `C:\irit\irit\ext_lib\puzbsp.c` | new — the interpreter-facing function |
-| `C:\irit\irit\ext_lib\PuzBspCore.c` | the shared algorithm (or the same file, referenced from here) |
-| `C:\irit\irit\inc_irit\ext_lib.h` | declare `IritExtPuzBsp` |
-| `C:\irit\irit\windowsVC2026\ext_lib\ext_lib.vcxproj` | compile the new files |
-| `C:\irit\irit\ext_lib\makefile.wnt`, `Makefile.am` | same, for nmake and Unix |
-| `C:\irit\irit\irit\inptprsl.h` | `IP_PUZBSP` — last in `ObjValueFuncType` |
-| `C:\irit\irit\irit\inptevl0.c` | `PUZBSP` row — last in `ObjFuncTable` |
-| `C:\irit\irit\dll_defs\irit_all_dll_defs.txt` | export `IritExtPuzBsp`, then run `make_defs.cmd` |
-| `C:\irit\irit\docs\irit.src` | index entry and manual entry |
-| rebuilt | `IritExt64.lib`, `Irit64.dll`, `iritInpt64.lib`, `irit64.exe`, `GuIrit64.exe` |
+| `C:\irit\irit\ext_lib\puzbsp.c` | **create** — the interpreter-facing function |
+| `C:\irit\irit\ext_lib\PuzBspCore.c` | **move here** from the plugin folder — the shared algorithm |
+| `C:\irit\irit\inc_irit\ext_lib.h` | **edit** — declare `IritExtPuzBsp` |
+| `C:\irit\irit\windowsVC2026\ext_lib\ext_lib.vcxproj` | **edit** — compile the new files |
+| `C:\irit\irit\ext_lib\makefile.wnt`, `Makefile.am` | **edit** — same, for nmake and Unix |
+| `C:\irit\irit\irit\inptprsl.h` | **edit** — add `IP_PUZBSP`, last in `ObjValueFuncType` |
+| `C:\irit\irit\irit\inptevl0.c` | **edit** — add the `PUZBSP` row, last in `ObjFuncTable` |
+| `C:\irit\irit\dll_defs\irit_all_dll_defs.txt` | **edit** — export `IritExtPuzBsp`, then run `make_defs.cmd` |
+| `C:\irit\irit\docs\irit.src` | **edit** — index entry and manual entry |
+| *(no file edit)* | **rebuild** `IritExt64.lib`, `Irit64.dll`, `iritInpt64.lib`, `irit64.exe`, `GuIrit64.exe` |
 
 ### Reference files worth keeping open while you work
 
