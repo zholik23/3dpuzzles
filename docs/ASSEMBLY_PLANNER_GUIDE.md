@@ -68,7 +68,7 @@ plannerCli(a, pieces);      // stages 1-3, printed; no-ops unless --plan is pass
 
 ### The app
 
-In `AppController::runTrivCellDivision` (`AppController.cpp:354`), the Boolean
+In `AppController::runTrivCellDivision` (`AppController.cpp:361`), the Boolean
 runs at **line 374**. After it, and after `m_pieces` is final, add:
 
 ```cpp

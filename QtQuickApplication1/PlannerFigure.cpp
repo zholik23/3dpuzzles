@@ -198,7 +198,7 @@ QImage figurePieces(const QImage &render, const QVector<PuzzlePiece> &pieces,
 
     const int top = drawHeader(p, kCanvasW,
         QStringLiteral("%1 %2 the pieces").arg(title).arg(kDash),
-        QStringLiteral("Divided through the bounding cage into %1 pieces, shown "
+        QStringLiteral("Divided into %1 pieces, shown "
                        "pulled apart. The number on each piece is the id the "
                        "planner uses in the next three pictures.")
             .arg(pieces.size()));
@@ -436,11 +436,13 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
         minY = qMin(minY, at[i].y());  maxY = qMax(maxY, at[i].y());
     }
 
-    const qreal pad = 36, captionH = 60;
+    // nodeRoom keeps the lowest node's radius clear of the caption - without
+    // it the bottom piece was drawn on top of its own step text.
+    const qreal pad = 36, captionH = 60, nodeRoom = 22;
     const qreal spanX = qMax<qreal>(maxX - minX, 1.0);
     const qreal spanY = qMax<qreal>(maxY - minY, 1.0);
-    const qreal innerH = ph - pad - captionH;
-    const qreal scale = qMin((pw - 2 * pad) / spanX, (innerH - 10) / spanY);
+    const qreal innerH = ph - pad - captionH - nodeRoom;
+    const qreal scale = qMin((pw - 2 * pad) / spanX, innerH / spanY);
     const auto place = [&](int piece, const QPointF &origin) {
         const qreal cx = (pw - scale * spanX) / 2.0;
         const qreal cy = pad + (innerH - scale * spanY) / 2.0;

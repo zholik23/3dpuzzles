@@ -53,6 +53,13 @@ class AppController : public QObject {
     Q_PROPERTY(QStringList saveFilters READ saveFilters CONSTANT)
     Q_PROPERTY(QString divisionInfo READ divisionInfo NOTIFY piecesChanged)
 
+    // The planner pictures of the last division as file URLs, in the order
+    // pieces, graph, blocking, removal order - shown in tabs over the view.
+    // Each carries a ?v= counter so QML reloads a picture rewritten under
+    // the same file name. Empty until a division has written them.
+    Q_PROPERTY(QStringList planFigures   READ planFigures   NOTIFY piecesChanged)
+    Q_PROPERTY(QString     planFolderUrl READ planFolderUrl NOTIFY piecesChanged)
+
 public:
     explicit AppController(QObject *parent = nullptr);
 
@@ -126,6 +133,8 @@ public:
     QString cutShapeInfo() const { return m_warp.describe(); }
     int     pieceCount()   const { return m_pieces.size(); }
     QString divisionInfo() const { return m_divisionInfo; }
+    QStringList planFigures()   const { return m_planFigures; }
+    QString     planFolderUrl() const { return m_planFolderUrl; }
     bool    canSave()      const { return !m_pieces.isEmpty(); }
     QStringList saveFilters() const { return PieceExport::nameFilters(); }
 
@@ -160,7 +169,7 @@ private:
     // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
     // pieces are described, so the reported counts are of the jointed result.
     void applyJoints();
-    // After a cage division: log the planner's three stages and draw
+    // After every division: log the planner's three stages and draw
     // them as pictures beside the model (PlannerFigure). Sets m_figureNote.
     void planAndDrawFigures();
 
@@ -189,6 +198,9 @@ private:
     QString m_divisionInfo;
     QString m_booleanNote;
     QString m_figureNote;       // where the planner figures went
+    QStringList m_planFigures;  // file URLs for the view's tabs
+    QString m_planFolderUrl;
+    int     m_figureVersion = 0; // bumps every write, busts QML's cache
     bool    m_hasError = false;
 
     JointParams m_joint;

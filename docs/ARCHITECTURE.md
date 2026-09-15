@@ -294,7 +294,7 @@ codebase; almost every "why are there two of these?" question resolves here.
 | A piece is | a sub-trivariate, tessellated | a clipped surface patch, capped |
 | Trimming | `CageBoolean` intersects each piece with the model | none needed — it never left the model |
 | Elber's method? | **yes, this is it** | no, it is the fallback for an STL with no V-rep |
-| Entry point | `AppController::runTrivCellDivision` (`AppController.cpp:354`) | `AppController::runCellDivision` (`:403`) |
+| Entry point | `AppController::runTrivCellDivision` (`AppController.cpp:373`) | `AppController::runCellDivision` (`:403`) |
 | Chosen when | `m_triv.isValid()` | otherwise |
 
 `AppController::dividesMesh()` is what the UI reads to tell the user which one
@@ -380,7 +380,7 @@ choosing each plane by minimising a cost against the material. Full treatment in
 §12.
 
 > **The split runs in WORLD proportions, then maps back to parameter space**
-> (`AppController.cpp:546-583`). The cage maps its unit domain onto a bounding
+> (`AppController.cpp:577`). The cage maps its unit domain onto a bounding
 > box that is rarely cubic, so "cut the longest axis" and the minimum-size floor
 > are only meaningful once the domain is scaled to real extents — otherwise a
 > parameter-cubic cell comes out as a long world slab. The mapping back is a
@@ -1009,6 +1009,89 @@ much of the output is still cage. Nothing takes the run down.
 **This is the research module.** Four stages in `namespace Planner`, plus two
 callers. None of it touches IRIT.
 
+### Read this first — the planner on one real run
+
+The planner answers one question: **can these pieces be put together, and in
+what order?** It does that in three steps. Each step is one file, and each is
+drawn by one of the pictures the app writes after every division — and shows
+in tabs over the 3D view.
+
+The example is a real run — the armadillo, 10 pieces, bounding cage. The
+pictures are copied into `docs/images/planner_armadillo_*.png`; the originals
+are in `common-3d-test-models-master/…/data/armadillo_planner/`, beside the
+model, which is where the app always writes them.
+
+![the pieces, numbered](images/planner_armadillo_1_pieces.png)
+
+**Step 1 — who touches whom** (`PlannerGraph`, picture 2). One node per piece,
+one line per pair of pieces that share a face. Here: 10 pieces, 22 shared faces,
+each piece touching between 3 and 6 others. A line's colour is the axis the
+shared face is perpendicular to — the red line between 0 and 2 means they meet
+on a plane perpendicular to X, one on the other's +X side. The graph records
+*which* side (`Contact::lowSide` is the piece with the smaller coordinate), and
+that is all Step 2 needs.
+
+![the adjacency graph](images/planner_armadillo_2_graph.png)
+
+**Step 2 — which ways can each piece move?** (`PlannerBlocking`, picture 3).
+For every piece and each of the six directions, ask: if this piece slides
+straight that way, does it push into a neighbour? Piece 0's row:
+
+| +X | −X | +Y | −Y | +Z | −Z |
+|---|---|---|---|---|---|
+| blocked by 2, 3 | free | blocked by 5, 6, 7 | free | blocked by 1 | free |
+
+Read it as: pieces 2 and 3 sit against piece 0's +X face, so 0 cannot leave that
+way; nothing sits against its −X face, so it can. The rule in the code is one
+line — a neighbour still present on a face blocks the direction through that
+face (`TranslationalBlocking::blocked`, `PlannerBlocking.cpp:30`).
+
+![blocking, all pieces in place](images/planner_armadillo_3_blocking.png)
+
+**Step 3 — take it apart, then reverse** (`Planner::extract`,
+`PlannerOrder.cpp:32`, picture 4). Take pieces *off* one at a time: find the
+first piece, in id order, that has any free direction; remove it along its first
+free direction in the order +X, −X, +Y, −Y, +Z, −Z; recompute blocking for the
+pieces left; repeat.
+
+- **1.** Piece 0: +X is blocked, −X is free → out along −X.
+- **2.** Piece 1: +X is blocked by 2, 3, 4; −X is free → out along −X.
+- **3.** Piece 2: its +X was free from the start — it simply comes next in id
+  order → out along +X. (Its −X, blocked by 0 and 1 at the start, is free too
+  by now, because both have gone.)
+- … and so on, one piece per step, to piece 9.
+
+![removal order](images/planner_armadillo_4_order.png)
+
+**Reverse the list and flip every direction** and you have the assembly order:
+place 9 first, moving along −X (it came *out* along +X), then 8, and so on, and
+place 0 last, moving along +X.
+
+**Three things to be ready to say about this result:**
+
+1. **Why the order is 0, 1, 2 … 9.** Nothing clever: the search takes the
+   *first* free piece in id order, and here every piece still had a free
+   direction when its turn came. The order is not optimised. It is a
+   *witness* — each step was checked against exactly the pieces still present.
+2. **Why it succeeded, and why that proves little yet.** Blocking is computed on
+   the pieces' cell boxes, and a set of boxes can always be taken apart this
+   way: the piece furthest along +X can never have a neighbour beyond it. So
+   "assemblable" here was guaranteed before the planner ran. The test starts to
+   mean something once joints restrict how pieces may move, or once a real
+   collision check replaces straight-line blocking.
+3. **What "free" does not mean.** It means only that a straight slide meets no
+   neighbour in contact on that face. No turning, no check of the space swept on
+   the way out, nothing about a piece that is in the way without touching. On the
+   curved armadillo some contacts are also *phantoms* — the cells meet where the
+   trimmed pieces do not (see `AssemblyOrder` below) — which makes the answer err
+   towards stuck, never towards a false pass. Every result carries: *"assemblable
+   under translational blocking; rotational/swept check pending"*.
+
+**Where it runs in the app:** `AppController::planAndDrawFigures`
+(`AppController.cpp:788`) builds the graph, blocking model and plan once per
+division, logs the plan and writes the four pictures. The stages below explain
+each file in full.
+
 ### Stage 1 — `PlannerGraph` — the adjacency graph
 
 `Planner::build(pieces, eps, minArea)` → `Graph`.
@@ -1145,11 +1228,19 @@ It adds one thing the `Planner` stages do not: **phantom contact detection.**
 
 ### Planner figures — `PlannerFigure`
 
-After every bounding-cage division the GUI writes four PNGs beside the model, in
+After every division — any mode, through the cage or on the mesh — the GUI
+writes four PNGs beside the model, in
 `<model folder>/<model name>_planner/` — falling back to
 `Pictures/PuzzleDivider/<model name>_planner/` if that folder cannot be
 created. The status text shows where they went. `--cage MODEL N SEED --figures
 DIR` writes the same set from the command line.
+
+**Shown in the app, automatically.** Tabs over the 3D view — *3D view · Pieces ·
+Graph · Blocking · Order* — display the last division's pictures, and *Open
+folder* opens them full size. The tabs appear once a division has written its
+pictures and refresh on every Divide. `AppController::planFigures` publishes
+the files as URLs with a `?v=` counter, so QML reloads a picture rewritten under
+the same name; `planFolderUrl` is the folder.
 
 | File | Shows |
 |---|---|
@@ -1242,7 +1333,7 @@ cosmetic**: a declined hole leaves a pin with nowhere to go, and the puzzle will
 not close up. It must be reported, and `AppController::applyJoints` says so in
 the status line.
 
-`AppController::applyJoints` (`AppController.cpp:763`) is the full sequence:
+`AppController::applyJoints` (`AppController.cpp:827`) is the full sequence:
 build the graph → extract the order with no joints → `chooseAlongOrder` → **fit
 the joints, then `replay` to verify the order still holds** → place → apply →
 report thinnest pin and warn under 1.2 mm.
@@ -1320,6 +1411,11 @@ removal all fall out of the same path.
 - `setFixedBounds` pins the camera to a given box instead of fitting it to what
   is loaded — needed so that `--shot model`, `--shot cells` and `--shot pieces`
   register pixel-for-pixel and can be overlaid.
+- **One camera, shared.** `camera()` and `project()` hold the projection maths,
+  used by the rasteriser and by `pieceAnchors()`. `tintFor`, `background`,
+  `pieceAnchors` and `axisOnScreen` are public so `PlannerFigure` can put a
+  graph node exactly on its piece, in its colour, with arrows that point the way
+  the piece moves.
 
 ### `AppController` — the app-level model
 
@@ -1345,15 +1441,28 @@ Division modes, all `Q_INVOKABLE`:
 number to manage, not a decision to make, and the log still records it so any
 layout can be reproduced.
 
+`planAndDrawFigures()` (`AppController.cpp:788`) runs in **all four** division
+paths once the pieces are final: `runDivision` and `runTrivCellDivision` on the
+cage (after trimming), `runMeshDivision` and `runCellDivision` on the mesh. It
+builds the planner graph, blocking model and plan once, logs the plan, writes the
+four pictures (§14), publishes them to QML as `planFigures` / `planFolderUrl`,
+and adds a `Planner figures: <folder>` line to the status text. Clearing the
+pieces clears the pictures too.
+
 **Loading and dividing are synchronous on the GUI thread** — a large STL will
-visibly stall the window.
+visibly stall the window, and writing the pictures adds about a second.
 
 ### `main.qml` — the current UI
 
 Top row: Open model… · Save pieces… · Spread apart (for slicing) · Shaded ·
 Reset view · Bounding cage · Back to model.
 Middle: Mode selector, the mode's inputs, New layout, Divide.
-Bottom: status, division info, an Explode slider, detail text.
+Over the view, once a division has written its planner pictures: tabs
+*3D view · Pieces · Graph · Blocking · Order* and an *Open folder* button.
+Bottom: status, division info (piece counts, shared faces, sizes, and the
+planner-figures folder), an Explode slider, detail text. Two
+explanatory captions — "Dividing the trivariate…" and the per-mode hints — were
+removed on request; only information about the result is shown.
 
 Four controls were **removed** and their defaults flipped to match, since with no
 control the default *is* the behaviour: *Joints*, *One file per piece*, *Edges*,
@@ -1369,7 +1478,7 @@ to bring it back.
 ## 18. Command-line reference
 
 Every stage is reachable without the UI, so a regression in one is never
-confused with a regression in another. `main.cpp:1199` dispatches; the first
+confused with a regression in another. `main.cpp:1216` dispatches; the first
 recognised flag wins.
 
 | Flag | Purpose |
@@ -1425,7 +1534,7 @@ substantiates it, and how it was verified.
 | Piece sizes are balanced | balance term | measured spread 175× → **1.91×** |
 | Voxels are an instrument, not the representation | `MaterialField` is discarded after the split | resolution 16→160 returns the same count, all connected |
 | An assembly order exists and is a witness | `Planner::extract` (`PlannerOrder.cpp:32`) | hand-verified on a cube |
-| Joints do not break that order | `chooseAlongOrder` + `replay` (`AppController.cpp:788`) | `replay` returns −1 |
+| Joints do not break that order | `chooseAlongOrder` + `replay` (`AppController.cpp:853`) | `replay` returns −1 |
 | Contacts counted are real, not artefacts of the cell box | `phantomContacts` (`AssemblyOrder.cpp:22`) | must be 0 on a cube |
 
 ---
@@ -1450,6 +1559,9 @@ substantiates it, and how it was verified.
 | Spiral (rotate-to-engage) joints | **not built** — and the measurement in §21 says the obvious form will not work |
 | Simulated annealing over layouts | **not built.** Proposed; slide deck exists |
 | Export to .itd / .obj / .stl | **working** |
+| Planner figures (four PNGs per division, shown in tabs over the 3D view) | **working** on cage divisions, checked on the armadillo run; the in-app tabs, figures for mesh divisions and a caption-overlap fix take effect after the next rebuild |
+| BSP division inside GuIrit (`GuIritDllBspPuzzle_64.dll`) | **built and installed**; the model-orientation fix for trimmed pieces awaits a run to confirm — see [`BSP_IN_IRIT_AND_GUIRIT.md`](BSP_IN_IRIT_AND_GUIRIT.md) |
+| `PUZBSP` IRIT script command | **blocked** — the interpreter edits compile, but `Irit64.dll` cannot be relinked while `geom_lib/ogl_depth_peel.c` is stubbed (since 2026-05-29) |
 | `AssemblyDivider` Stage B / C | **not built** |
 
 ---
@@ -1574,15 +1686,15 @@ Everything compiled into the app, in dependency order.
 | `PlannerOrder.h/.cpp` | 48 / 162 | stage 3 — greedy monotone order extraction + replay |
 | `PlannerJoints.h/.cpp` | 61 / 194 | stage 4 — joints chosen to fit the order |
 | `AssemblyOrder.h/.cpp` | 89 / 230 | the front door: run the three stages, report, count phantoms |
-| `PlannerFigure.h/.cpp` | 53 / 631 | pictures of the planner's three stages for slides, written after each cage division |
+| `PlannerFigure.h/.cpp` | 53 / 633 | pictures of the planner's three stages for slides, written after each cage division |
 | `AssemblyPlanner.h/.cpp` | 79 / 272 | spanning-tree spiral/dovetail planner + rotation sweep |
 | `AssemblyDivider/AssemblyDivider.h/.cpp` | 80 / 196 | Stage A: split to target + signed contact graph |
 | `IritJoint.h/.cpp` | 136 / 477 | Elber's pin and hole, cut in by boolean |
 | `PieceExport.h/.cpp` | 68 / 373 | write .itd / .obj / .stl, one object per piece, spread |
-| `MeshView.h/.cpp` | 126 / 544 | software z-buffer rasteriser, exploded view |
-| `AppController.h/.cpp` | 204 / 846 | the app model, exposed to QML |
-| `main.cpp` | 1283 | 9 CLI modes, then the QML engine |
-| `main.qml` | 302 | the UI |
+| `MeshView.h/.cpp` | 153 / 612 | software z-buffer rasteriser, exploded view |
+| `AppController.h/.cpp` | 220 / 910 | the app model, exposed to QML |
+| `main.cpp` | 1300 | 9 CLI modes, then the QML engine |
+| `main.qml` | 336 | the UI |
 
 Related documents in `docs/`:
 

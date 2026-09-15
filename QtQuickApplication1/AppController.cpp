@@ -57,6 +57,8 @@ void AppController::loadPath(const QString &path)
         m_mesh = MeshData();
         m_sourceMesh = MeshData();
         m_pieces.clear();
+        m_planFigures.clear();
+        m_planFolderUrl.clear();
         m_triv = Trivariate();
         emit meshChanged();
         emit piecesChanged();
@@ -69,6 +71,8 @@ void AppController::loadPath(const QString &path)
     m_mesh       = mesh;
     m_sourceMesh = mesh;        // survives adopting a cage over the top
     m_pieces.clear();
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
     m_triv = Trivariate();
     m_trivInfo.clear();
     m_divisionInfo.clear();
@@ -109,6 +113,8 @@ void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
 
     m_triv = std::move(tv);
     m_pieces.clear();
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
 
     double dom[6];
     int    ord[3];
@@ -187,6 +193,8 @@ void AppController::useBoundingCage()
 void AppController::showWholeModel()
 {
     m_pieces.clear();
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
     m_divisionInfo.clear();
     emit piecesChanged();
     // meshChanged makes the view drop back to the single-part model.
@@ -334,6 +342,7 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
                         double(m_mesh.diagonal()));
 
     m_pieces = std::move(pieces);
+    planAndDrawFigures();
 
     // The mesh path cuts in world space, so the "domain" is the working mesh's
     // bounding box and the cuts are millimetres, not parameters.
@@ -349,6 +358,9 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
                    QStringLiteral(" · ") + m_warp.describe(),
                    spec.cellCount(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+
+    if (!m_figureNote.isEmpty())
+        m_divisionInfo += QStringLiteral("\n") + m_figureNote;
 
     m_status   = QStringLiteral("%1 — %2 pieces").arg(m_fileName).arg(m_pieces.size());
     m_detail   = m_divisionInfo;
@@ -430,12 +442,16 @@ void AppController::runCellDivision(const QVector<CellBox> &cells,
                         double(m_mesh.diagonal()));
 
     m_pieces = std::move(pieces);
+    planAndDrawFigures();
     logCells(note, cells);
     logPieceSizes();
 
     applyJoints();
     describePieces(note, cells.size(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+
+    if (!m_figureNote.isEmpty())
+        m_divisionInfo += QStringLiteral("\n") + m_figureNote;
 
     m_status   = QStringLiteral("%1 — %2 pieces").arg(m_fileName).arg(m_pieces.size());
     m_detail   = m_divisionInfo;
@@ -766,14 +782,16 @@ void AppController::setAddJoints(bool on)
     emit jointsChanged();
 }
 
-// After a cage division: the planner's three stages, logged and drawn. Both
-// cage paths call this once their pieces are trimmed, so the log and the
-// pictures describe exactly the pieces on screen.
+// After every division: the planner's three stages, logged and drawn. All four
+// division paths call this once their pieces are final (trimmed, on the cage
+// paths), so the log and the pictures describe exactly the pieces on screen.
 void AppController::planAndDrawFigures()
 {
     m_figureNote.clear();
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
     if (m_sourceMesh.isEmpty() || m_pieces.isEmpty())
-        return;                     // not a cage division of a loaded model
+        return;                     // nothing divided from a loaded model
 
     const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
     const Planner::TranslationalBlocking model;
@@ -795,6 +813,15 @@ void AppController::planAndDrawFigures()
         ? QStringLiteral("Planner figures not written")
         : QStringLiteral("Planner figures: %1")
               .arg(QDir::toNativeSeparators(fig.folder));
+
+    // For the tabs over the view. The version suffix makes QML reload a picture
+    // that the previous division wrote under the same file name.
+    ++m_figureVersion;
+    for (const QString &path : fig.written)
+        m_planFigures << QUrl::fromLocalFile(path).toString()
+                         + QStringLiteral("?v=%1").arg(m_figureVersion);
+    if (!fig.written.isEmpty())
+        m_planFolderUrl = QUrl::fromLocalFile(fig.folder).toString();
 }
 
 void AppController::applyJoints()

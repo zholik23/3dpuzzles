@@ -149,7 +149,7 @@ region extraction, Booleans, tessellation.
 | `MaterialField::volumeIn` | `MaterialField.cpp:275` | `PuzBspFieldVolumeIn()` |
 | `MaterialField::isConnected` | `MaterialField.cpp:219` | `PuzBspFieldIsConnected()` |
 | `PuzzleDivider::buildBspTree` — leaf choice, 24 candidates, cost, connectivity gate | `PuzzleDivider.cpp:630-850` | `PuzBspBuildCells()` |
-| world → parameter mapping | `AppController.cpp:546-583` | `PuzBspCellToTV()` |
+| world → parameter mapping | `AppController.cpp:561` | `PuzBspCellToTV()` |
 
 **Do not port** `CageBoolean`'s lump repair, `IritSolid`, `PieceExport` or the
 planner. They exist because the app rebuilds polygons from `MeshData`; inside

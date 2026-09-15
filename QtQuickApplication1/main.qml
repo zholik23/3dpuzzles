@@ -28,10 +28,70 @@ ApplicationWindow {
 
     Label {
         anchors { right: view.right; bottom: view.bottom; margins: 10 }
+        visible: viewTabs.currentIndex === 0
         text: "drag = rotate · wheel = zoom" +
               (view.partCount > 1 ? " · " + view.partCount + " pieces" : "")
         color: "#6c7480"
         font.pixelSize: 11
+    }
+
+    // ---------- PLANNER PICTURES ----------
+    // Every division writes four pictures of the planner beside the model
+    // (PlannerFigure). These tabs show the last division's pictures here, so
+    // they never have to be found in a folder. "3D view" is the model itself.
+    Rectangle {
+        id: figurePane
+        anchors.fill: view
+        visible: viewTabs.currentIndex > 0
+        color: "white"
+
+        // Swallow drags so the hidden 3D view does not rotate underneath.
+        MouseArea { anchors.fill: parent }
+
+        Image {
+            anchors {
+                fill: parent
+                margins: 8
+                topMargin: viewTabs.height + 16
+            }
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            cache: false
+            smooth: true
+            mipmap: true
+            source: (viewTabs.currentIndex > 0 &&
+                     viewTabs.currentIndex <= app.planFigures.length)
+                    ? app.planFigures[viewTabs.currentIndex - 1] : ""
+        }
+    }
+
+    TabBar {
+        id: viewTabs
+        anchors { left: view.left; top: view.top; margins: 8 }
+        visible: app.planFigures.length > 0
+        TabButton { text: "3D view";  width: implicitWidth }
+        TabButton { text: "Pieces";   width: implicitWidth }
+        TabButton { text: "Graph";    width: implicitWidth }
+        TabButton { text: "Blocking"; width: implicitWidth }
+        TabButton { text: "Order";    width: implicitWidth }
+    }
+
+    Button {
+        anchors { right: view.right; top: view.top; margins: 8 }
+        visible: app.planFigures.length > 0
+        text: "Open folder"
+        onClicked: Qt.openUrlExternally(app.planFolderUrl)
+        ToolTip.visible: hovered
+        ToolTip.text: "The planner pictures of this division, full size"
+    }
+
+    // A division without pictures, or a newly loaded model, goes back to 3D.
+    Connections {
+        target: app
+        function onPiecesChanged() {
+            if (app.planFigures.length === 0)
+                viewTabs.currentIndex = 0
+        }
     }
 
     // ---------- CONTROLS ----------
