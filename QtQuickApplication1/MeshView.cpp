@@ -59,10 +59,8 @@ void MeshView::setPieces(const QVector<PuzzlePiece> &pieces)
             continue;
         Part p;
         p.mesh = pieces[n].mesh;
-        // Colour by cell index rather than list position, so a piece keeps its
-        // colour when the grid changes size.
-        const int h = pieces[n].i * 5 + pieces[n].j * 3 + pieces[n].k;
-        p.tint = kPalette[((h % kPaletteSize) + kPaletteSize) % kPaletteSize];
+        p.tint   = tintFor(pieces[n]);
+        p.source = n;
         m_parts.append(std::move(p));
     }
     rebuildParts();
@@ -76,6 +74,19 @@ void MeshView::clearMesh()
     rebuildParts();
     emit meshChanged();
     update();
+}
+
+QRgb MeshView::tintFor(const PuzzlePiece &piece)
+{
+    // Colour by cell index rather than list position, so a piece keeps its
+    // colour when the grid changes size.
+    const int h = piece.i * 5 + piece.j * 3 + piece.k;
+    return kPalette[((h % kPaletteSize) + kPaletteSize) % kPaletteSize];
+}
+
+QRgb MeshView::background()
+{
+    return kBackground;
 }
 
 // Assigns each part its slice of m_proj and the direction it moves when the
@@ -239,17 +250,16 @@ void MeshView::clearFixedBounds()
     update();
 }
 
-void MeshView::projectVertices(int w, int h)
+bool MeshView::camera(int w, int h, Camera *c) const
 {
     if (m_parts.isEmpty())
-        return;
+        return false;
 
     const float *lo = m_fixedBounds ? m_fixMin : m_bmin;
     const float *hi = m_fixedBounds ? m_fixMax : m_bmax;
 
-    float centre[3];
     for (int k = 0; k < 3; ++k)
-        centre[k] = 0.5f * (lo[k] + hi[k]);
+        c->centre[k] = 0.5f * (lo[k] + hi[k]);
 
     const float dx = hi[0] - lo[0];
     const float dy = hi[1] - lo[1];
@@ -259,39 +269,97 @@ void MeshView::projectVertices(int w, int h)
         radius = 1.0f;
 
     // Exploding pushes pieces outward, so the set needs more room on screen.
-    const float fit   = radius * (1.0f + float(m_explode));
-    const float scale = (float(qMin(w, h)) * 0.45f * float(m_zoom)) / fit;
+    const float fit = radius * (1.0f + float(m_explode));
+    c->scale = (float(qMin(w, h)) * 0.45f * float(m_zoom)) / fit;
+    c->ox    = 0.5f * float(w);
+    c->oy    = 0.5f * float(h);
+    orient(c);
+    return true;
+}
 
-    const float cy = std::cos(float(m_yaw)   * kDegToRad);
-    const float sy = std::sin(float(m_yaw)   * kDegToRad);
-    const float cp = std::cos(float(m_pitch) * kDegToRad);
-    const float sp = std::sin(float(m_pitch) * kDegToRad);
+void MeshView::orient(Camera *c) const
+{
+    c->cy = std::cos(float(m_yaw)   * kDegToRad);
+    c->sy = std::sin(float(m_yaw)   * kDegToRad);
+    c->cp = std::cos(float(m_pitch) * kDegToRad);
+    c->sp = std::sin(float(m_pitch) * kDegToRad);
+}
 
-    const float ox = 0.5f * float(w);
-    const float oy = 0.5f * float(h);
+// (x, y, z) is already centred and exploded.
+void MeshView::project(const Camera &c, float x, float y, float z, SV *s) const
+{
+    // Yaw about Y, then pitch about X.
+    const float x1 =  c.cy * x + c.sy * z;
+    const float z1 = -c.sy * x + c.cy * z;
+    const float y2 =  c.cp * y - c.sp * z1;
+    const float z2 =  c.sp * y + c.cp * z1;
 
+    s->x = c.ox + x1 * c.scale;
+    s->y = c.oy - y2 * c.scale;          // screen Y grows downward
+    s->z = z2 * c.scale;                 // larger z = nearer the viewer
+}
+
+void MeshView::projectVertices(int w, int h)
+{
+    Camera c;
+    if (!camera(w, h, &c))
+        return;
+
+    const float e = float(m_explode);
     for (const Part &p : m_parts) {
         const int n = p.mesh.vertexCount();
-        for (int i = 0; i < n; ++i) {
-            const float x = p.mesh.pos[i * 3 + 0] - centre[0]
-                          + p.push[0] * float(m_explode);
-            const float y = p.mesh.pos[i * 3 + 1] - centre[1]
-                          + p.push[1] * float(m_explode);
-            const float z = p.mesh.pos[i * 3 + 2] - centre[2]
-                          + p.push[2] * float(m_explode);
-
-            // Yaw about Y, then pitch about X.
-            const float x1 =  cy * x + sy * z;
-            const float z1 = -sy * x + cy * z;
-            const float y2 =  cp * y - sp * z1;
-            const float z2 =  sp * y + cp * z1;
-
-            SV &s = m_proj[p.base + i];
-            s.x = ox + x1 * scale;
-            s.y = oy - y2 * scale;          // screen Y grows downward
-            s.z = z2 * scale;               // larger z = nearer the viewer
-        }
+        for (int i = 0; i < n; ++i)
+            project(c,
+                    p.mesh.pos[i * 3 + 0] - c.centre[0] + p.push[0] * e,
+                    p.mesh.pos[i * 3 + 1] - c.centre[1] + p.push[1] * e,
+                    p.mesh.pos[i * 3 + 2] - c.centre[2] + p.push[2] * e,
+                    &m_proj[p.base + i]);
     }
+}
+
+QVector<QPointF> MeshView::pieceAnchors(int w, int h, QVector<bool> *valid) const
+{
+    int n = 0;
+    for (const Part &p : m_parts)
+        n = qMax(n, p.source + 1);
+
+    QVector<QPointF> out(n);
+    if (valid != nullptr)
+        valid->fill(false, n);
+
+    Camera c;
+    if (!camera(w, h, &c))
+        return out;
+
+    const float e = float(m_explode);
+    for (const Part &p : m_parts) {
+        if (p.source < 0)
+            continue;
+        SV s;
+        project(c,
+                0.5f * (p.mesh.bmin[0] + p.mesh.bmax[0]) - c.centre[0] + p.push[0] * e,
+                0.5f * (p.mesh.bmin[1] + p.mesh.bmax[1]) - c.centre[1] + p.push[1] * e,
+                0.5f * (p.mesh.bmin[2] + p.mesh.bmax[2]) - c.centre[2] + p.push[2] * e,
+                &s);
+        out[p.source] = QPointF(qreal(s.x), qreal(s.y));
+        if (valid != nullptr)
+            (*valid)[p.source] = true;
+    }
+    return out;
+}
+
+QPointF MeshView::axisOnScreen(int axis) const
+{
+    Camera c;
+    c.scale = 1.0f;
+    c.ox = c.oy = 0.0f;
+    orient(&c);
+
+    SV s;
+    project(c, axis == 0 ? 1.0f : 0.0f,
+               axis == 1 ? 1.0f : 0.0f,
+               axis == 2 ? 1.0f : 0.0f, &s);
+    return QPointF(qreal(s.x), qreal(s.y));
 }
 
 // ------------------------------------------------------------- rasterising --

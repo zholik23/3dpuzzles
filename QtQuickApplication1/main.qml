@@ -14,12 +14,6 @@ ApplicationWindow {
     color: "#20242b"
     title: "Puzzle Divider — division without joints"
 
-    readonly property var modeHints: [
-        "Every piece the same size and shape, cut by straight planes.",
-        "Split recursively, one cell at a time, so piece sizes are independent of each other and a big piece can border several small ones — a grid of cut planes can never do that. Pieces are never cut below a usable minimum size.",
-        "Caps how big any piece may get; the count follows from the limit. On a MESH the cuts come out evenly spaced — in world space equal slabs already satisfy a size limit, so there is nothing to be uneven about. On a TRIVARIATE the same limit gives genuinely unequal cuts, because equal parameter steps are not equal physical sizes. For unequal pieces on a mesh, use Random."
-    ]
-
     // ---------- 3D VIEW ----------
     // MeshView is our own QQuickPaintedItem: it rasterises with a z-buffer, so
     // no Qt Quick 3D module is needed.
@@ -70,16 +64,6 @@ ApplicationWindow {
                     onClicked: saveDialog.open()
                 }
                 CheckBox {
-                    id: splitFiles
-                    text: "One file per piece"
-                    checked: false
-                    contentItem: Text {
-                        text: parent.text; color: "#ccc"
-                        leftPadding: parent.indicator.width + 4
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-                CheckBox {
                     id: spreadOut
                     text: "Spread apart (for slicing)"
                     // On by default: a slicer merges touching shells into one
@@ -105,25 +89,10 @@ ApplicationWindow {
                         verticalAlignment: Text.AlignVCenter
                     }
                 }
-                CheckBox {
-                    text: "Edges"
-                    checked: view.showEdges
-                    onToggled: view.showEdges = checked
-                    contentItem: Text {
-                        text: parent.text; color: "#ccc"
-                        leftPadding: parent.indicator.width + 4
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
                 Button {
                     text: "Reset view"
                     enabled: view.hasMesh
                     onClicked: view.resetView()
-                }
-                Button {
-                    text: "Use trivariate in file"
-                    enabled: app.hasMesh
-                    onClicked: app.useTrivariateFromFile()
                 }
                 Button {
                     // A box over the model's extent: right size, wrong shape.
@@ -149,18 +118,6 @@ ApplicationWindow {
                 font.bold: true
                 elide: Text.ElideMiddle
                 Layout.fillWidth: true
-            }
-
-            // --- what gets divided ---------------------------------------
-            Label {
-                Layout.fillWidth: true
-                color: app.dividesMesh ? "#9cc07e" : "#7ab0c8"
-                font.pixelSize: 12
-                wrapMode: Text.WordWrap
-                text: app.dividesMesh
-                    ? "Dividing the loaded model — pieces keep its real shape."
-                    : "Dividing the trivariate “" + app.trivariateName +
-                      "” — Elber's method, every piece a solid sub-trivariate."
             }
 
             // --- how it gets divided -------------------------------------
@@ -239,24 +196,6 @@ ApplicationWindow {
                     SpinBox { id: maxAxis; from: 1; to: 64; value: 16; width: 100; editable: true }
                 }
 
-                CheckBox {
-                    id: jointsBox
-                    text: "Joints"
-                    // Not bound to app.addJoints: clicking a CheckBox breaks a
-                    // binding on `checked`, which would leave the two out of
-                    // step. The checkbox owns the state and pushes it down.
-                    checked: true
-                    onCheckedChanged: app.addJoints = checked
-                    contentItem: Text {
-                        text: parent.text; color: "#ccc"
-                        leftPadding: parent.indicator.width + 4
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: "Cut Elber's pin/hole pair into every shared " +
-                                  "face with an IRIT boolean, using the pin " +
-                                  "from his puz_vol.irt."
-                }
                 Button {
                     text: "Divide"
                     enabled: app.hasMesh
@@ -284,14 +223,6 @@ ApplicationWindow {
                 visible: app.pieceCount > 0
                 text: app.divisionInfo
                 color: app.jointNote.indexOf("FAILED") >= 0 ? "#e88" : "#9cc07e"
-                font.pixelSize: 11
-                wrapMode: Text.WordWrap
-            }
-
-            Label {
-                Layout.fillWidth: true
-                text: win.modeHints[modeBox.currentIndex]
-                color: "#7d8894"
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
             }
@@ -328,7 +259,10 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "itd"
         nameFilters: app.saveFilters
-        onAccepted: app.savePieces(selectedFile, splitFiles.checked, spreadOut.checked)
+        // one file per piece is off while the control is hidden; PieceExport
+        // still supports it, so restoring the checkbox is the only change
+        // needed to bring it back.
+        onAccepted: app.savePieces(selectedFile, false, spreadOut.checked)
     }
 
     FileDialog {

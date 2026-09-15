@@ -1,8 +1,10 @@
 #include "AppController.h"
+#include "PlannerFigure.h"
 #include "AssemblyDivider/AssemblyDivider.h"
 #include "CadLoader.h"
 #include <functional>
 
+#include "AssemblyOrder.h"
 #include "CageBoolean.h"
 #include <QElapsedTimer>
 
@@ -711,7 +713,7 @@ static int assembleCli(const QStringList &a)
     return 0;
 }
 
-// Elber Section 5 end to end:  --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png]
+// Elber Section 5 end to end:  --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png] [--figures DIR]
 // Wraps the model in a bounding-cage trivariate, divides the cage, then
 // intersects each boxy cage piece with the original model.
 // --field MODEL [RES ...] : how the voxel measurement converges with
@@ -765,6 +767,24 @@ static int fieldCli(const QStringList &a)
         const double hi[3] = { ext[0], ext[1], ext[2] };
         const bool whole = f.isConnected(lo, hi);
 
+        // Probe the exact call the splitter makes: halve the box on each axis
+        // and ask whether each half is one lump. On a convex model every answer
+        // must be "yes", so any "no" here is a bug in the test, not a fact
+        // about the model.
+        QString halves;
+        for (int ax = 0; ax < 3; ++ax) {
+            double m1[3] = { ext[0], ext[1], ext[2] };
+            double l2[3] = { 0, 0, 0 };
+            m1[ax] = l2[ax] = 0.5 * ext[ax];
+            int b1 = 0, t1 = 0, b2 = 0, t2 = 0;
+            const int L1 = f.lumpStats(lo, m1, &b1, &t1);
+            const int L2 = f.lumpStats(l2, hi, &b2, &t2);
+            halves += QStringLiteral(" %1:%2lumps(%3/%4)|%5lumps(%6/%7)")
+                          .arg(QChar('X' + ax))
+                          .arg(L1).arg(b1).arg(t1)
+                          .arg(L2).arg(b2).arg(t2);
+        }
+
         std::printf("%-6d %-22s %12d %14.6g %9.2f%% %9.3f %8lld  %s\n",
                     res,
                     qPrintable(QStringLiteral("%1 x %2 x %3")
@@ -773,6 +793,7 @@ static int fieldCli(const QStringList &a)
                     100.0 * (vol - exact) / qMax(1e-9, exact),
                     f.side(0), (long long)ms,
                     whole ? "one body" : "FALLS APART");
+        std::printf("        halves  lumps(biggest/total):%s\n", qPrintable(halves));
         std::fflush(stdout);
     }
     return 0;
@@ -877,10 +898,72 @@ static int shotCli(const QStringList &a)
     return 0;
 }
 
+// --order MODEL [N] [SEED] : divide, then ask whether the pieces can be
+// assembled. Prints the three steps and the verdict.
+static int orderCli(const QStringList &a)
+{
+    if (a.isEmpty()) {
+        std::printf("usage: --order MODEL [N] [SEED]\n");
+        return 2;
+    }
+    MeshData model;
+    QString err;
+    if (!CadLoader::load(a.at(0), &model, &err)) {
+        std::printf("FAIL  %s\n", qPrintable(err));
+        return 1;
+    }
+    const int n    = (a.size() > 1) ? a.at(1).toInt() : 6;
+    const int seed = (a.size() > 2) ? a.at(2).toInt() : 7;
+
+    Trivariate cage = Trivariate::boundingCage(model, &err);
+    if (!cage.isValid()) { std::printf("FAIL  %s\n", qPrintable(err)); return 1; }
+
+    double dom[6];
+    cage.domain(dom);
+    double ext[3];
+    for (int k = 0; k < 3; ++k)
+        ext[k] = qMax(1e-9, double(model.bmax[k]) - double(model.bmin[k]));
+    const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
+
+    const MaterialField field = MaterialField::build(model);
+    const QVector<CellBox> world =
+        PuzzleDivider::buildBspCells(wdom, qMax(1, n), 0.35, quint32(seed), 0.0,
+                                     field.isValid() ? &field : nullptr);
+    QVector<CellBox> cells;
+    for (const CellBox &w : world) {
+        CellBox c;
+        for (int k = 0; k < 3; ++k) {
+            const double lo = dom[k * 2], span = dom[k * 2 + 1] - lo;
+            c.lo[k] = lo + span * (w.lo[k] / ext[k]);
+            c.hi[k] = lo + span * (w.hi[k] / ext[k]);
+        }
+        cells.append(c);
+    }
+
+    QVector<PuzzlePiece> pieces;
+    QString warn;
+    if (!PuzzleDivider::divideCells(cage, cells, 12.0, &pieces, &warn)) {
+        std::printf("FAIL  %s\n", qPrintable(warn));
+        return 1;
+    }
+    const CageBoolean::Result br = CageBoolean::intersectAll(&pieces, model, 12.0);
+    std::printf("DIVIDE  %s \u00b7 asked %d \u00b7 %d piece(s), %d failed\n",
+                qPrintable(QFileInfo(a.at(0)).fileName()), n,
+                int(pieces.size()), br.failed);
+    std::printf("\n");
+
+    const AssemblyOrder::Result r = AssemblyOrder::run(pieces, 1e-4);
+    for (const QString &line : r.describe())
+        std::printf("%s\n", qPrintable(line));
+
+    std::fflush(stdout);
+    return r.assemblable ? 0 : 3;
+}
+
 static int cageCli(const QStringList &a)
 {
     if (a.isEmpty()) {
-        std::printf("usage: --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png]\n");
+        std::printf("usage: --cage MODEL [N] [SEED] [--png BEFORE.png AFTER.png] [--figures DIR]\n");
         return 2;
     }
 
@@ -1102,6 +1185,30 @@ static int cageCli(const QStringList &a)
                             qPrintable(a.at(k)), qPrintable(perr));
         }
 
+    // Stages 1-3 on the trimmed pieces. Silent unless --plan is passed.
+    //
+    // Read the verdict with care: these pieces come from cutting a box with
+    // flat planes, and a box partition can always be peeled along an axis, so
+    // "assemblable" here is correct and uninformative. It starts carrying
+    // information once joints constrain the motion.
+    plannerCli(a, pieces);
+
+    // --figures DIR : the planner's three stages as PNGs for slides - the same
+    // pictures the GUI writes beside the model after a cage division.
+    const int fg = a.indexOf(QStringLiteral("--figures"));
+    if (fg >= 0 && a.size() > fg + 1) {
+        const Planner::Graph                 figGraph = Planner::build(pieces, 1e-6, 0.0);
+        const Planner::TranslationalBlocking figModel;
+        const Planner::Plan                  figPlan  = Planner::extract(figGraph, figModel);
+        const PlannerFigure::Result fr =
+            PlannerFigure::write(pieces, figGraph, figModel, figPlan, a.at(fg + 1),
+                                 QFileInfo(a.at(0)).completeBaseName());
+        for (const QString &f : fr.written)
+            std::printf("FIG   %s\n", qPrintable(f));
+        for (const QString &problem : fr.problems)
+            std::printf("FIG   FAIL %s\n", qPrintable(problem));
+    }
+
     std::fflush(stdout);
     return 0;
 }
@@ -1120,6 +1227,10 @@ int main(int argc, char *argv[])
         const int p = args.indexOf(QStringLiteral("--probe"));
         if (p >= 0)
             return probe(args.mid(p + 1));
+
+        const int od = args.indexOf(QStringLiteral("--order"));
+        if (od >= 0)
+            return orderCli(args.mid(od + 1));
 
         const int sh = args.indexOf(QStringLiteral("--shot"));
         if (sh >= 0)

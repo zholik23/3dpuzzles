@@ -120,6 +120,7 @@
     <ClCompile Include="AssemblyDivider\AssemblyDivider.cpp" />
     <ClCompile Include="AssemblyPlanner.cpp" />
     <ClCompile Include="CadLoader.cpp" />
+    <ClCompile Include="AssemblyOrder.cpp" />
     <ClCompile Include="CageBoolean.cpp" />
     <ClCompile Include="MaterialField.cpp" />
     <ClCompile Include="PieceExport.cpp" />
@@ -135,6 +136,7 @@
     <ClCompile Include="PlannerBlocking.cpp" />
     <ClCompile Include="PlannerGraph.cpp" />
     <ClCompile Include="PlannerJoints.cpp" />
+    <ClCompile Include="PlannerFigure.cpp" />
     <ClCompile Include="PlannerOrder.cpp" />
     <ClCompile Include="PuzzleDivider.cpp" />
     <ClCompile Include="Trivariate.cpp" />
@@ -144,6 +146,7 @@
     <ClInclude Include="AssemblyDivider\AssemblyDivider.h" />
     <ClInclude Include="AssemblyPlanner.h" />
     <ClInclude Include="CadLoader.h" />
+    <ClInclude Include="AssemblyOrder.h" />
     <ClInclude Include="CageBoolean.h" />
     <ClInclude Include="MaterialField.h" />
     <ClInclude Include="PieceExport.h" />
@@ -157,6 +160,7 @@
     <ClInclude Include="PlannerBlocking.h" />
     <ClInclude Include="PlannerGraph.h" />
     <ClInclude Include="PlannerJoints.h" />
+    <ClInclude Include="PlannerFigure.h" />
     <ClInclude Include="PlannerOrder.h" />
     <ClInclude Include="PuzzleDivider.h" />
     <ClInclude Include="Trivariate.h" />

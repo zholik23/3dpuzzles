@@ -2,13 +2,15 @@
 
 #include "MaterialField.h"
 #include "CadLoader.h"
-
+#include "PlannerGraph.h"
+#include "PlannerFigure.h"
 #include <QDebug>
 #include <QRandomGenerator>
 #include <algorithm>
 #include <cmath>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QDir>
 #include <QLocale>
 
 AppController::AppController(QObject *parent)
@@ -258,7 +260,7 @@ void AppController::runDivision(const DivisionSpec &spec)
     m_pieces = std::move(pieces);
 
     // Elber Section 5, Fig. 14c -> 14d -> 14e. The division above gives boxy
-    // sub-trivariates of the CAGE; intersecting each with the original model is
+    // sub-trivariates of the CAGE; stage B intersecting each with the original model is
     // what trims them back to the real surface while leaving the interior cut
     // faces alone. Without it the pieces keep the cage's shape, which is why a
     // cage-divided model comes out cuboid.
@@ -274,6 +276,8 @@ void AppController::runDivision(const DivisionSpec &spec)
                             .arg(br.intersected).arg(br.dropped).arg(br.failed);
     }
 
+    planAndDrawFigures();
+
     double dom[6];
     m_triv.domain(dom);
     logDivision(QStringLiteral("V-rep cuts in parameter space · ") + spec.note,
@@ -283,6 +287,9 @@ void AppController::runDivision(const DivisionSpec &spec)
     applyJoints();
     describePieces(QStringLiteral("V-rep · ") + spec.note, spec.cellCount(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+
+    if (!m_figureNote.isEmpty())
+        m_divisionInfo += QStringLiteral("\n") + m_figureNote;
 
     m_status   = QStringLiteral("%1 — %2 pieces").arg(m_triv.label()).arg(m_pieces.size());
     m_detail   = m_divisionInfo;
@@ -379,12 +386,17 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
                             .arg(br.intersected).arg(br.dropped).arg(br.failed);
     }
 
+    planAndDrawFigures();
+
     logCells(QStringLiteral("V-rep BSP cells in parameter space · ") + note, cells);
     logPieceSizes();
 
     applyJoints();
     describePieces(QStringLiteral("V-rep · ") + note, cells.size(), warning);
     m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+
+    if (!m_figureNote.isEmpty())
+        m_divisionInfo += QStringLiteral("\n") + m_figureNote;
 
     m_status   = QStringLiteral("%1 — %2 pieces").arg(m_triv.label()).arg(m_pieces.size());
     m_detail   = m_divisionInfo;
@@ -449,7 +461,12 @@ void AppController::describePieces(const QString &note, int gridCells,
 
     // The adjacency graph is what the joint planner will run its spanning tree
     // over, so its size is worth reporting even before joints exist.
-    const int shared = PuzzleDivider::adjacency(m_pieces, DivisionSpec()).size();
+    // adjacencyOfBoxes, not adjacency(): the latter finds neighbours by stepping
+    // grid coordinates (i+1, j, k), and BSP cells have none - divideCells stores
+    // a LINEAR index in i with j = k = 0. It therefore returned a chain of
+    // exactly n-1 edges, which is what made the UI report "9 of 10 cells filled
+    // - 8 shared faces". The planner already uses the geometric pairing.
+    const int shared = PuzzleDivider::adjacencyOfBoxes(m_pieces, 1e-6).size();
 
     m_divisionInfo = QStringLiteral("%1 · %2 of %3 cells filled · %4 shared faces\n"
                                     "Largest piece bbox %5 × %6 × %7 "
@@ -747,6 +764,37 @@ void AppController::setAddJoints(bool on)
         return;
     m_addJoints = on;
     emit jointsChanged();
+}
+
+// After a cage division: the planner's three stages, logged and drawn. Both
+// cage paths call this once their pieces are trimmed, so the log and the
+// pictures describe exactly the pieces on screen.
+void AppController::planAndDrawFigures()
+{
+    m_figureNote.clear();
+    if (m_sourceMesh.isEmpty() || m_pieces.isEmpty())
+        return;                     // not a cage division of a loaded model
+
+    const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
+    const Planner::TranslationalBlocking model;
+    const Planner::Plan plan = Planner::extract(graph, model);
+
+    for (const QString &line : plan.describe(8))
+        qDebug().noquote() << line;
+
+    // Passed in rather than recomputed, so the pictures cannot disagree with
+    // the lines just logged.
+    const PlannerFigure::Result fig =
+        PlannerFigure::write(m_pieces, graph, model, plan,
+                             PlannerFigure::folderFor(m_loadedPath),
+                             QFileInfo(m_loadedPath).completeBaseName());
+    for (const QString &problem : fig.problems)
+        qWarning().noquote() << "FIGURE" << problem;
+
+    m_figureNote = fig.written.isEmpty()
+        ? QStringLiteral("Planner figures not written")
+        : QStringLiteral("Planner figures: %1")
+              .arg(QDir::toNativeSeparators(fig.folder));
 }
 
 void AppController::applyJoints()

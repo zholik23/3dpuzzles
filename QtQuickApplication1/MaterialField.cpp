@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
 {
@@ -60,10 +61,19 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
         const int j0 = qMax(0,      int(std::floor(loY / f.m_cell[1] - 0.5)));
         const int j1 = qMin(ny - 1, int(std::ceil (hiY / f.m_cell[1] - 0.5)));
 
+        // The sample point is nudged off the exact voxel centre by an
+        // irrational fraction of a cell. A centre that lands precisely on an
+        // edge shared by two triangles is counted twice or not at all, and on a
+        // mesh whose edges line up - a UV sphere's meridians, any lathed or
+        // extruded model - that misfires along a whole seam at once, leaving an
+        // empty curtain of columns that splits the model in two. The offset is
+        // far below a voxel, so it changes no volume, but it cannot coincide
+        // with a mesh edge.
+        const double jx = 0.5 + 1.0 / 512.0, jy = 0.5 + 1.0 / 337.0;
         for (int i = i0; i <= i1; ++i) {
-            const double px = (i + 0.5) * f.m_cell[0];
+            const double px = (i + jx) * f.m_cell[0];
             for (int j = j0; j <= j1; ++j) {
-                const double py = (j + 0.5) * f.m_cell[1];
+                const double py = (j + jy) * f.m_cell[1];
 
                 // Barycentric coordinates of the column centre.
                 const double w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / det;
@@ -141,6 +151,69 @@ bool MaterialField::range(const double lo[3], const double hi[3],
             return false;
     }
     return true;
+}
+
+int MaterialField::lumpStats(const double lo[3], const double hi[3],
+                             int *biggest, int *total) const
+{
+    *biggest = *total = 0;
+    if (!isValid())
+        return 0;
+    int a[3], b[3];
+    if (!range(lo, hi, a, b))
+        return 0;
+
+    const int nx = b[0] - a[0], ny = b[1] - a[1], nz = b[2] - a[2];
+    QVector<quint8> seen(qsizetype(nx) * ny * nz, 0);
+    int lumps = 0;
+
+    for (int i = a[0]; i < b[0]; ++i)
+    for (int j = a[1]; j < b[1]; ++j)
+    for (int k = a[2]; k < b[2]; ++k) {
+        if (!m_occ[occIndex(i, j, k)])
+            continue;
+        ++*total;
+        const int start = ((i - a[0]) * ny + (j - a[1])) * nz + (k - a[2]);
+        if (seen[start])
+            continue;
+        ++lumps;
+        int size = 0;
+        int lo_i = 1 << 30, hi_i = -1, lo_j = 1 << 30, hi_j = -1, lo_k = 1 << 30, hi_k = -1;
+        QVector<int> stack;
+        stack.append(start);
+        seen[start] = 1;
+        while (!stack.isEmpty()) {
+            const int idx = stack.takeLast();
+            ++size;
+            const int li = idx / (ny * nz), lj = (idx / nz) % ny, lk = idx % nz;
+            lo_i = qMin(lo_i, li); hi_i = qMax(hi_i, li);
+            lo_j = qMin(lo_j, lj); hi_j = qMax(hi_j, lj);
+            lo_k = qMin(lo_k, lk); hi_k = qMax(hi_k, lk);
+            static const int st[6][3] = { {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1} };
+            for (int d = 0; d < 6; ++d) {
+                const int ni = li + st[d][0], nj = lj + st[d][1], nk = lk + st[d][2];
+                if (ni < 0 || nj < 0 || nk < 0 || ni >= nx || nj >= ny || nk >= nz)
+                    continue;
+                const int nIdx = (ni * ny + nj) * nz + nk;
+                if (seen[nIdx] || !m_occ[occIndex(a[0]+ni, a[1]+nj, a[2]+nk)])
+                    continue;
+                seen[nIdx] = 1;
+                stack.append(nIdx);
+            }
+        }
+        if (size > *biggest) *biggest = size;
+        if (size > 500)
+            std::printf("          lump %d: %d voxels  i[%d..%d] j[%d..%d] k[%d..%d]\n",
+                        lumps, size, lo_i, hi_i, lo_j, hi_j, lo_k, hi_k);
+    }
+    // the outer loop counted every occupied voxel once, but only the unseen
+    // ones started a lump - recount the total properly
+    *total = 0;
+    for (int i = a[0]; i < b[0]; ++i)
+    for (int j = a[1]; j < b[1]; ++j)
+    for (int k = a[2]; k < b[2]; ++k)
+        if (m_occ[occIndex(i, j, k)]) ++*total;
+    return lumps;
 }
 
 bool MaterialField::isConnected(const double lo[3], const double hi[3]) const

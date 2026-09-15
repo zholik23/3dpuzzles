@@ -58,6 +58,11 @@ public:
     // connection thinner than a voxel is not seen.
     bool isConnected(const double lo[3], const double hi[3]) const;
 
+    // Diagnostic: how many lumps, how big the largest is, and the total, so a
+    // "disconnected" verdict can be told from a single stray voxel.
+    int lumpStats(const double lo[3], const double hi[3],
+                  int *biggest, int *total) const;
+
 private:
     int             m_n[3]    = { 0, 0, 0 };
     double          m_cell[3] = { 0, 0, 0 };

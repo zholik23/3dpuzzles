@@ -160,6 +160,9 @@ private:
     // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
     // pieces are described, so the reported counts are of the jointed result.
     void applyJoints();
+    // After a cage division: log the planner's three stages and draw
+    // them as pictures beside the model (PlannerFigure). Sets m_figureNote.
+    void planAndDrawFigures();
 
     // Dumps the chosen cut positions and the resulting piece sizes to the debug
     // output, so an even division can be told from an uneven one by reading.
@@ -185,12 +188,16 @@ private:
     QString m_trivInfo;
     QString m_divisionInfo;
     QString m_booleanNote;
+    QString m_figureNote;       // where the planner figures went
     bool    m_hasError = false;
 
     JointParams m_joint;
     QString     m_jointNote;
     // On by default: dividing a model is meant to produce jointed pieces.
-    bool        m_addJoints = true;
+    // Off by default: the Joints control is hidden, so nothing can turn
+    // this off at runtime. The joint code and the addJoints property are
+    // untouched - restoring the checkbox is enough to bring it back.
+    bool        m_addJoints = false;
 
     // IRIT's tessellation fineness (higher = more polygons). Pieces get a
     // lower setting than the whole model: each covers a fraction of the domain

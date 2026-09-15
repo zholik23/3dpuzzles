@@ -4,6 +4,15 @@ This project is an advanced 3D processing application that combines two major ca
 1. **3D Puzzle Divider**: Divides a 3D solid into printable puzzle pieces, analyzes their assemblability, and adds pin/hole joints.
 2. **Iso-Parametric GCode Generator**: Generates conformal GCode for 3D printing by slicing along the parametric iso-curves of the model surfaces, rather than traditional planar layers.
 
+> **Full reference:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — every
+> module, every library, both pipelines traced end to end, and an honest
+> inventory of what is working, stubbed or unbuilt. The summary below is a quick
+> index; that document is the authority.
+>
+> Note: item 2 above, the iso-parametric G-code generator, is **not currently in
+> the build** — `IsoGcodeGenerator.cpp` is present in the folder but is not
+> listed in `QtQuickApplication1.vcxproj`.
+
 ## 📂 File Architecture ("What files for what")
 
 ### Core Application & UI

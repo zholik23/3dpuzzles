@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QRandomGenerator>
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 
@@ -573,6 +574,59 @@ PuzzleDivider::adjacency(const QVector<PuzzlePiece> &pieces, const DivisionSpec 
 
 // ------------------------------------------------------------- BSP cells --
 
+
+namespace {
+
+// How a cut is chosen.
+//
+// The old rule accepted any plane leaving each side between 15% and 85% of the
+// material. That is a threshold nobody can defend - 60/70 is just as arguable -
+// and inside the window the position came from a random draw, so the piece
+// shapes were decided by the seed rather than by the model.
+//
+// This replaces it with a cost that is MINIMISED. The balance term's optimum is
+// an even split, worked out per cell from the material actually there, so there
+// is no ratio to justify: the answer to "why not 60/70?" is that no ratio is
+// chosen at all.
+//
+// The terms are summed with weights so more can be added without disturbing
+// what works. Only balance is live; the rest are named, weighted 0, and
+// deliberately not implemented yet.
+struct CutWeights {
+    double balance = 1.0;   // live
+    double thin    = 0.0;   // STUB - penalise cuts through a thin neck
+    double discon  = 0.0;   // STUB - penalise cuts that sever a piece
+};
+
+struct CutCost {
+    double imbalance     = 0.0;   // |left - right| / cellMaterial, in [0, 1]
+    double thinness      = 0.0;   // STUB - always 0 for now
+    double disconnection = 0.0;   // STUB - always 0 for now
+
+    double total(const CutWeights &w) const
+    {
+        return w.balance * imbalance
+             + w.thin    * thinness
+             + w.discon  * disconnection;
+    }
+};
+
+struct Candidate {
+    double f;        // cut position as a fraction of the cell's extent
+    double cost;
+    double imbalance;
+};
+
+// Set BSP_LOG=1 to print every candidate and the one chosen.
+bool splitLogging()
+{
+    static const bool on = qEnvironmentVariableIsSet("BSP_LOG") &&
+                           qEnvironmentVariableIntValue("BSP_LOG") != 0;
+    return on;
+}
+
+} // namespace
+
 QVector<PuzzleDivider::BspNode>
 PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
                             double splitJitter, quint32 seed, double minSide,
@@ -600,16 +654,14 @@ PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
     QRandomGenerator rng(seed);
     splitJitter = qBound(0.0, splitJitter, 0.40);
 
-    // The least material a piece may end up with. Deliberately generous: its job
-    // is to forbid EMPTY, not to equalise sizes, and a strict floor would reject
-    // so many cuts that the split would finish under target - trading the
-    // problem for the same symptom.
-    const bool   useMat  = material != nullptr && material->isValid() &&
-                           material->total() > 0.0;
-    const double matFloor = useMat
-        ? qMax(4.0 * material->voxelVolume(),
-               0.05 * material->total() / double(targetPieces))
-        : 0.0;
+    const bool useMat = material != nullptr && material->isValid() &&
+                        material->total() > 0.0;
+
+    // How many planes are scored per axis. Enough that the sampled minimum sits
+    // within a fraction of a percent of the true one, cheap enough not to
+    // matter: each candidate is a handful of prefix-sum lookups.
+    const int kCutCandidates = 24;
+    const CutWeights kCutWeights;          // balance live, the rest stubbed at 0
 
     QVector<int>  leaves;        // node indices that are currently leaves
     QVector<bool> exhausted;     // no axis long enough to cut
@@ -640,8 +692,8 @@ PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
         // because five of the cuts landed elsewhere. Splitting the largest every
         // time bounds that - a piece can only stay large if it was large one cut
         // ago, and it will be chosen again. The irregularity the puzzle needs
-        // comes from WHERE each cut falls (the jittered material share below),
-        // not from which cell is chosen.
+        // comes from WHERE each cut falls - the cost minimum below, which
+        // follows the model - not from which cell is chosen.
         int slot = -1;
         double best = 0.0;
         for (int i = 0; i < leaves.size(); ++i)
@@ -678,9 +730,14 @@ PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
             if (extent < 2.0 * minSide)
                 continue;
 
+            // The only bound on where a plane may fall is minSide, which is a
+            // PRINTABILITY limit on the cell. The old jitter window
+            // [0.5-j, 0.5+j] is deliberately not applied to the material path:
+            // it was the same arbitrary 15-85% threshold expressed as a
+            // position, and it would have quietly bounded the search.
             const double edge = minSide / extent;
-            const double lo   = qMax(0.5 - splitJitter, edge);
-            const double hi   = qMin(0.5 + splitJitter, 1.0 - edge);
+            const double lo   = useMat ? edge       : qMax(0.5 - splitJitter, edge);
+            const double hi   = useMat ? 1.0 - edge : qMin(0.5 + splitJitter, 1.0 - edge);
             if (hi <= lo)
                 continue;
 
@@ -688,44 +745,83 @@ PuzzleDivider::buildBspTree(const double domain[6], int targetPieces,
 
             if (useMat) {
                 const double cellMat = material->volumeIn(cell.lo, cell.hi);
-                if (cellMat < 2.0 * matFloor)
+
+                // "Nearly nothing", not a ratio. A half holding less than a few
+                // voxels is degenerate geometry rather than a small piece, and
+                // this is the only material threshold left in the splitter.
+                const double degenerate = 4.0 * material->voxelVolume();
+                if (cellMat < 2.0 * degenerate)
                     continue;              // not enough here to make two pieces
 
-                // Aim for a random SHARE OF THE MATERIAL rather than a random
-                // position. Keeping the share off 0.5 is what keeps the pieces
-                // irregular - the point of the jitter - while measuring it in
-                // material rather than in space is what keeps both halves
-                // non-empty.
-                const double want = cellMat *
-                    (0.5 + (rng.generateDouble() * 2.0 - 1.0) * splitJitter);
+                // Sample candidate planes across the whole admissible span. The
+                // span is bounded by minSide, which is a PRINTABILITY limit on
+                // the cell, not a material ratio.
+                QVector<Candidate> cands;
+                cands.reserve(kCutCandidates);
+                for (int c = 0; c < kCutCandidates; ++c) {
+                    const double cf = lo + (hi - lo) * (c + 0.5) / kCutCandidates;
+                    double cut[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
+                    cut[axis] = cell.lo[axis] + extent * cf;
 
-                // Material to the left grows monotonically with the plane, so a
-                // bisection finds the share exactly. Each probe is eight lookups.
-                double a = lo, b = hi;
-                for (int it = 0; it < 24; ++it) {
-                    const double mid = 0.5 * (a + b);
-                    double half[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
-                    half[axis] = cell.lo[axis] + extent * mid;
-                    (material->volumeIn(cell.lo, half) < want ? a : b) = mid;
+                    const double left  = material->volumeIn(cell.lo, cut);
+                    const double right = cellMat - left;
+                    if (left <= degenerate || right <= degenerate)
+                        continue;          // would make an empty or sliver cell
+
+                    CutCost cost;
+                    cost.imbalance = std::fabs(left - right) / cellMat;
+                    cands.append({ cf, cost.total(kCutWeights), cost.imbalance });
                 }
-                f = 0.5 * (a + b);
+                if (cands.isEmpty()) {
+                    if (splitLogging())
+                        std::printf("SPLIT cell %d · axis %c · no candidate "
+                                    "leaves material on both sides\n",
+                                    nodeIdx, "XYZ"[axis]);
+                    continue;              // no usable plane on this axis
+                }
 
-                // Accept only if BOTH sides keep material. This is the induction
-                // step: every leaf then descends from a non-empty parent through
-                // non-empty cuts, so no leaf can be empty.
-                double cut[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
-                cut[axis] = cell.lo[axis] + extent * f;
-                const double left = material->volumeIn(cell.lo, cut);
-                if (left < matFloor || cellMat - left < matFloor)
-                    continue;              // try the next axis
+                std::sort(cands.begin(), cands.end(),
+                          [](const Candidate &a, const Candidate &b) {
+                              return a.cost < b.cost;
+                          });
 
-                if (pass == 0) {
+                if (splitLogging()) {
+                    std::printf("SPLIT cell %d \u00b7 axis %c \u00b7 %d candidates\n",
+                                nodeIdx, "XYZ"[axis], int(cands.size()));
+                    for (int c = 0; c < cands.size(); ++c)
+                        std::printf("        f=%.3f imb=%.3f%s",
+                                    cands[c].f, cands[c].imbalance,
+                                    (c % 5 == 4 || c + 1 == cands.size()) ? "\n" : "");
+                }
+
+                // Take the cheapest candidate that also survives the pass-0
+                // connectivity test, rather than taking the cheapest and then
+                // rejecting the whole axis if it happens to sever a piece.
+                int picked = -1;
+                for (int c = 0; c < cands.size() && picked < 0; ++c) {
+                    if (pass != 0) { picked = c; break; }
+                    double cut[3] = { cell.hi[0], cell.hi[1], cell.hi[2] };
+                    cut[axis] = cell.lo[axis] + extent * cands[c].f;
                     double rlo[3] = { cell.lo[0], cell.lo[1], cell.lo[2] };
                     rlo[axis] = cut[axis];
-                    if (!material->isConnected(cell.lo, cut) ||
-                        !material->isConnected(rlo, cell.hi))
-                        continue;          // this cut would sever a piece
+                    if (material->isConnected(cell.lo, cut) &&
+                        material->isConnected(rlo, cell.hi))
+                        picked = c;
                 }
+                if (picked < 0) {
+                    if (splitLogging())
+                        std::printf("    -> none of %d kept both halves connected; "
+                                    "trying another axis\n", int(cands.size()));
+                    continue;              // every plane here would sever a piece
+                }
+
+                f = cands[picked].f;
+
+                if (splitLogging())
+                    std::printf("    -> chose f=%.3f  imbalance %.3f  "
+                                "(rank %d of %d)\n",
+                                cands[picked].f, cands[picked].imbalance,
+                                picked + 1, int(cands.size()));
             }
 
             const double at = cell.lo[axis] + extent * f;

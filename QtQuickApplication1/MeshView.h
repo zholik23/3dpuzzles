@@ -53,6 +53,21 @@ public:
     void setPieces(const QVector<PuzzlePiece> &pieces);
     void clearMesh();
 
+    // The colour a piece is painted in, and the ground behind everything.
+    // Exposed so figures drawn beside the view (PlannerFigure) colour a
+    // piece's graph node exactly like the piece itself.
+    static QRgb tintFor(const PuzzlePiece &piece);
+    static QRgb background();
+
+    // Where each piece's bounding-box centre lands on screen at size w x h,
+    // with the current camera and explode. Indexed like the vector given to
+    // setPieces(); a piece skipped for having no geometry gets valid[i] false.
+    QVector<QPointF> pieceAnchors(int w, int h, QVector<bool> *valid) const;
+
+    // A unit world axis (0/1/2) as a screen direction, so an arrow drawn over
+    // a render points the way the piece actually moves.
+    QPointF axisOnScreen(int axis) const;
+
     AppController *controller() const { return m_controller; }
     void setController(AppController *c);
 
@@ -89,15 +104,27 @@ protected:
 private:
     struct SV { float x, y, z; };            // screen space, z toward viewer
 
+    // Everything the projection needs, worked out once per frame. Shared by
+    // the rasteriser and by pieceAnchors(), so labels land on their pieces.
+    struct Camera {
+        float centre[3];
+        float scale, ox, oy;
+        float cy, sy, cp, sp;
+    };
+
     struct Part {
         MeshData mesh;
         float    push[3] = { 0, 0, 0 };      // direction moved when exploding
         QRgb     tint    = 0;
         int      base    = 0;                // first index into m_proj
+        int      source  = -1;               // index in setPieces(); -1 from setMesh
     };
 
     void rebuildParts();                     // bases, tints, push directions
     void projectVertices(int w, int h);
+    bool camera(int w, int h, Camera *c) const;   // false when nothing to show
+    void orient(Camera *c) const;                 // yaw/pitch only
+    void project(const Camera &c, float x, float y, float z, SV *s) const;
     void rasterise(int w, int h);
     void drawEdgesDepthTested(int w, int h);
 
@@ -117,7 +144,9 @@ private:
     float  m_fixMin[3] = { 0, 0, 0 };
     float  m_fixMax[3] = { 0, 0, 0 };
     bool  m_shaded    = true;
-    bool  m_showEdges = true;
+    // Off by default for the same reason the Edges checkbox is gone: with
+    // no control, the default is the only setting there is.
+    bool  m_showEdges = false;
 
     QPointF        m_lastMouse;
     AppController *m_controller = nullptr;

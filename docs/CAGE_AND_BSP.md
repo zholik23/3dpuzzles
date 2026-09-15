@@ -4,6 +4,9 @@ How a polygonal model becomes puzzle pieces: what the trivariate cage is, how it
 is built, how the BSP splits it, which IRIT functions do the work, and how the
 requested piece count is now honoured exactly.
 
+For the same pipeline with the responsible code quoted stage by stage, see
+`DIVISION_WALKTHROUGH.md`.
+
 This documents what the code does today. Where a design choice was forced by a
 measurement, the measurement is given.
 
@@ -120,10 +123,10 @@ only reaches products `nu × nv × nw`.
 
 ```
 while (leaves.size() < targetPieces):
-    pick a leaf, with probability proportional to how much MODEL it holds
+    pick the leaf holding the most MODEL material
     try axes longest-first
-    cut so each half gets a jittered share of that model material
-    reject the cut if either half would be empty
+    score 24 candidate planes, cheapest cost wins
+    reject a cut that empties or severs a half
     if no axis worked: mark the leaf "exhausted"
 ```
 
@@ -137,15 +140,11 @@ one untouched block. Weighting by volume drives the split toward the big cells.
 rather than slab-like. Falling through to a shorter axis is what still allows a
 cell that is already thin in its longest direction to be divided at all.
 
-**The cut position is jittered, not central.** The fraction `f` is drawn from
-
-```
-    f ∈ [0.5 − jitter, 0.5 + jitter]  ∩  [minSide/extent, 1 − minSide/extent]
-```
-
-with `jitter = 0.35` from the UI. The first interval is the randomness; the
-second is the minimum-size floor, and it is what makes pieces printable. If the
-two intervals do not overlap, that axis is unusable.
+**The cut position comes from the cost, not from a draw.** Candidates span
+`[minSide/extent, 1 − minSide/extent]` — the whole range the printability floor
+allows — and the cheapest is taken. The jitter window that used to bound this is
+gone: it was the same arbitrary 15–85% threshold expressed as a position, and it
+would have quietly bounded the search.
 
 **`minSide` is derived, not tuned.** When passed 0 it defaults to
 
@@ -179,13 +178,14 @@ three things change:
    largest bounds that — a piece can only stay large if it was large one cut
    ago, and it will be picked again. A cell with no material has weight 0 and is
    never chosen at all.
-2. **The cut targets a share of the MATERIAL.** Instead of a random *position*
-   near the middle, the splitter picks a random *share* in
-   `[0.5 − jitter, 0.5 + jitter]` of the cell's material and bisects for the
-   plane that delivers it. Material to the left grows monotonically with the
-   plane, so 24 bisection steps land on it exactly. Randomising the share rather
-   than the position is what keeps pieces irregular while keeping both halves
-   non-empty.
+2. **The cut position minimises a cost, with no threshold anywhere.** 24 planes
+   are scored across the cell and the cheapest is taken. The live term is
+   balance — `|left − right| / cellMaterial` — whose optimum is an even split,
+   worked out per cell from the material actually present. This replaced an
+   earlier rule that accepted any plane leaving each side between 15% and 85% of
+   the material, which was a threshold nobody could defend and which chose
+   randomly inside its window. The cost is a weighted sum so further terms
+   (thinness, disconnection) can be added; they are stubbed at weight 0.
 3. **A cut is accepted only if both halves keep material** above a floor of
    `max(4 voxels, 5% of an average piece)`. If not, the next axis is tried.
 4. **A cut that would sever a piece is rejected.** `MaterialField::isConnected`
@@ -215,7 +215,8 @@ now balancing. On the armadillo at 6 pieces:
 |---|---|---|---|
 | by cage volume | 496 | 87,092 | 175× |
 | by material, sampled leaf | 4,486 | 117,650 | 26× |
-| by material, largest leaf | 24,167 | 59,272 | **2.45×** |
+| by material, largest leaf, random share | 24,167 | 59,272 | 2.8× |
+| by material, largest leaf, minimum cost | 30,073 | 57,314 | **1.91×** |
 
 ### Splitting in world proportions
 
@@ -423,12 +424,13 @@ planes, and the cage is a box, so nothing about the division is freeform. The
 V-rep machinery is genuine but its shape freedom is unused until the cage hugs
 the model.
 
-**(b) Piece sizes are bounded, not equalised.** Splitting the largest cell by
-material brought the armadillo at 6 pieces to a 2.45× spread (from 175×). What
-remains is the deliberate jitter: each cut takes between 15% and 85% of a cell's
-material, and that is what keeps the pieces irregular rather than uniform. If a
-tighter band is ever wanted, lowering the jitter is the lever, at the cost of
-making the puzzle more regular.
+**(b) Piece sizes are bounded, not equalised.** Splitting the largest cell and
+minimising the imbalance cost brought the armadillo at 6 pieces to a **1.91×**
+spread (from 175×). What remains comes from the cut having to be placed on a
+plane that also keeps both halves connected and above the printable floor, so
+the cheapest candidate is not always available — the logs show this as a cut
+chosen at "rank 2 of 24". Tightening it further means adding a term to the cost,
+not adjusting a window.
 
 **(c) Debris is discarded, not merged.** A component below 0.5% of an average
 piece is dropped rather than promoted to a piece of its own — a 29-unit speck
