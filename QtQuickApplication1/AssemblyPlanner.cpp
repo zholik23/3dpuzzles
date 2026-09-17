@@ -1,3 +1,8 @@
+//
+// AssemblyPlanner - implementation: the spanning tree of spiral joints, dovetails
+// on the remaining edges, and the box tests for approach and rotation sweep.
+//
+
 #include "AssemblyPlanner.h"
 
 #include <QQueue>
@@ -40,7 +45,7 @@ Box boxOf(const PuzzlePiece &p)
 }
 
 // The corridor a piece travels down on its way in: its own box, extended from
-// its final position out to the edge of the world along the approach direction.
+// its final position out to the edge of the world.
 Box approachCorridor(const Box &b, int axis, bool fromPositiveSide, double reach)
 {
     Box c = b;
@@ -49,12 +54,9 @@ Box approachCorridor(const Box &b, int axis, bool fromPositiveSide, double reach
     return c;
 }
 
-// The volume a piece sweeps while turning `deg` about a line parallel to `axis`
-// through (cu, cv) in the other two coordinates.
-//
-// Sampled rather than solved: the union of the box at several angles. That is
-// why the sample count matters - too few and the union misses the bulge between
-// samples, which would pass an assembly that actually jams.
+// The volume a piece sweeps while turning about an axis. Sampled as the union of
+// the box at several angles, so too few samples miss the bulge between them and
+// would pass an assembly that actually jams.
 Box rotationSweep(const Box &b, int axis, double cu, double cv,
                   double deg, int samples)
 {
@@ -74,7 +76,6 @@ Box rotationSweep(const Box &b, int axis, double cu, double cv,
         const double t = rad * double(i) / double(samples - 1);
         const double c = std::cos(t), sn = std::sin(t);
 
-        // Four corners of the box's cross-section, rotated about (cu, cv).
         for (int k = 0; k < 4; ++k) {
             const double pu = ((k & 1) ? b.hi[u] : b.lo[u]) - cu;
             const double pv = ((k & 2) ? b.hi[v] : b.lo[v]) - cv;
@@ -87,8 +88,10 @@ Box rotationSweep(const Box &b, int axis, double cu, double cv,
     return s;
 }
 
-} // namespace
+}
 
+// Spanning tree of spiral joints rooted at the best-connected piece, dovetails
+// on the loop-closing edges, then the locking and collision checks.
 AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
                                    const QVector<PuzzleDivider::Neighbours> &links,
                                    const Params &params)
@@ -100,7 +103,6 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
         return out;
     }
 
-    // ---- adjacency -------------------------------------------------------
     struct Edge { int other, axis, id; };
     QVector<QVector<Edge>> adj(n);
     for (int e = 0; e < links.size(); ++e) {
@@ -109,9 +111,6 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
         adj[l.b].append({ l.a, l.axis, e });
     }
 
-    // ---- spanning tree ---------------------------------------------------
-    // Root at the best-connected piece: it stays put while everything else is
-    // seated onto it, so the more faces it anchors the better.
     int root = 0;
     for (int i = 1; i < n; ++i)
         if (adj[i].size() > adj[root].size())
@@ -144,9 +143,6 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
             out.problems << QStringLiteral(
                 "Piece %1 touches nothing - it cannot be joined to the assembly.").arg(i);
 
-    // ---- joints ----------------------------------------------------------
-    // Tree edges carry the seating rotation; everything else closes a loop and
-    // gets a dovetail.
     QVector<int> spiralAxisOf(n, -1);
     for (int e = 0; e < links.size(); ++e) {
         const auto &l = links[e];
@@ -166,10 +162,6 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
         out.joints.append(j);
     }
 
-    // ---- locking ---------------------------------------------------------
-    // A spiral about axis A is blocked from unwinding by a dovetail on a face
-    // whose normal is perpendicular to A, sliding along A. So each piece needs
-    // at least one loop-closing edge on an axis other than its own spiral's.
     QVector<bool> locked(n, false);
     for (const PlannedJoint &j : out.joints) {
         if (j.kind != PlannedJoint::Dovetail)
@@ -186,7 +178,6 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
                 "Piece %1 has no dovetail across its spiral axis - nothing stops "
                 "it unwinding.").arg(i);
 
-    // ---- collision -------------------------------------------------------
     double reach = 0.0;
     for (int a = 0; a < 3; ++a) {
         double lo = 1e300, hi = -1e300;
@@ -212,10 +203,8 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
             continue;
         }
 
-        // Which side of the parent the child sits on decides which way it comes in.
         const bool fromPositive = cb.lo[axis] >= pb.hi[axis] - params.clearance;
 
-        // The joint axis runs through the middle of the shared face.
         const int u = (axis + 1) % 3, v = (axis + 2) % 3;
         const double cu = 0.5 * (qMax(cb.lo[u], pb.lo[u]) + qMin(cb.hi[u], pb.hi[u]));
         const double cv = 0.5 * (qMax(cb.lo[v], pb.lo[v]) + qMin(cb.hi[v], pb.hi[v]));
@@ -227,7 +216,7 @@ AssemblyPlan AssemblyPlanner::plan(const QVector<PuzzlePiece> &pieces,
 
         for (int q : placed) {
             if (q == parent)
-                continue;                      // the parent is what it seats ONTO
+                continue;
             const Box qb = boxOf(pieces[q]);
             if (corridor.overlaps(qb, params.clearance))
                 out.problems << QStringLiteral(
@@ -259,7 +248,6 @@ QStringList AssemblyPlanner::describe(const AssemblyPlan &plan,
                               "and locked");
     }
     else {
-        // Only the first few, or a bad plan buries the console.
         out << QStringLiteral("plan is INVALID - %1 problem(s):")
                    .arg(plan.problems.size());
         for (int i = 0; i < qMin(8, int(plan.problems.size())); ++i)

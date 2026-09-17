@@ -1,3 +1,8 @@
+//
+// CutWarp - implementation: the bicubic Bernstein displacement fields and the
+// forward and inverse shear passes.
+//
+
 #include "CutWarp.h"
 
 #include <QRandomGenerator>
@@ -33,7 +38,7 @@ inline double patch(const double g[4][4], double s, double t)
     return v;
 }
 
-} // namespace
+}
 
 void CutWarp::reseed()
 {
@@ -45,13 +50,13 @@ void CutWarp::reseed()
                     grid[r][a][i][j] = rng.generateDouble() * 2.0 - 1.0;
 }
 
+// The forward warp: the three shears, run twice, with the budget split across
+// the rounds so the total excursion stays near `amount`.
 void CutWarp::apply(double p[3], const double bmin[3], const double bmax[3],
                     double diagonal) const
 {
     if (!active())
         return;
-    // Split the budget across the rounds so the total excursion stays near
-    // `amount` however many rounds there are.
     const double amp = amount * diagonal / double(kRounds);
 
     for (int r = 0; r < kRounds; ++r)
@@ -63,6 +68,8 @@ void CutWarp::apply(double p[3], const double bmin[3], const double bmax[3],
         }
 }
 
+// Exactly the forward loops in reverse - rounds backwards, and the axes
+// backwards within each round - so the same displacement comes straight off.
 void CutWarp::invert(double p[3], const double bmin[3], const double bmax[3],
                      double diagonal) const
 {
@@ -70,9 +77,6 @@ void CutWarp::invert(double p[3], const double bmin[3], const double bmax[3],
         return;
     const double amp = amount * diagonal / double(kRounds);
 
-    // Exactly the forward loops in reverse: rounds backwards, and within each
-    // round the axes backwards. At every step the other two coordinates already
-    // hold the same values apply() saw, so the same amount comes straight off.
     for (int r = kRounds - 1; r >= 0; --r)
         for (int a = 2; a >= 0; --a) {
             const int b = (a + 1) % 3, c = (a + 2) % 3;

@@ -76,13 +76,25 @@ ApplicationWindow {
         TabButton { text: "Order";    width: implicitWidth }
     }
 
-    Button {
+    Row {
         anchors { right: view.right; top: view.top; margins: 8 }
-        visible: app.planFigures.length > 0
-        text: "Open folder"
-        onClicked: Qt.openUrlExternally(app.planFolderUrl)
-        ToolTip.visible: hovered
-        ToolTip.text: "The planner pictures of this division, full size"
+        spacing: 8
+
+        Button {
+            visible: app.reportUrl.length > 0
+            text: "Open report"
+            onClicked: Qt.openUrlExternally(app.reportUrl)
+            ToolTip.visible: hovered
+            ToolTip.text: "Written analysis of this division: model facts, " +
+                          "timings, every piece, and what the planner concluded"
+        }
+        Button {
+            visible: app.planFigures.length > 0
+            text: "Open folder"
+            onClicked: Qt.openUrlExternally(app.planFolderUrl)
+            ToolTip.visible: hovered
+            ToolTip.text: "The planner pictures of this division, full size"
+        }
     }
 
     // A division without pictures, or a newly loaded model, goes back to 3D.

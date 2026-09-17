@@ -2,19 +2,15 @@
 //
 // MaterialField - how much of the model lies inside an axis-aligned box.
 //
-// The reason this exists: the BSP splits the CAGE, and the cage is a box while
-// the model is not. Choosing cuts by cage volume means the splitter has never
-// looked at the model, so it happily places a cell in thin air - an armadillo
-// fills only 10.7% of its own bounding box, so most of the cage is empty. Those
-// cells produce nothing, get dropped, and a request for 6 pieces returns 5.
+// The BSP splits the cage, which is a box, while the model is not: an armadillo
+// fills only 10.7% of its own bounding box. Cuts chosen by cage volume therefore
+// place cells in thin air, and a request for 6 pieces comes back with 5. With
+// this, cuts follow the material instead.
 //
-// With this, the splitter can ask "how much material is in this box?" and cut
-// where the model actually is. Since every cell is an axis-aligned box, the
-// answer comes from a 3D prefix sum over a voxel grid: eight lookups, O(1), so
-// the search can test hundreds of candidate planes per cut without cost.
-//
-// Coordinates are LOCAL: (0,0,0) is the model's minimum corner. That matches the
-// domain the BSP runs on, which is sized to the model's world extents.
+// Every cell is an axis-aligned box, so a 3D prefix sum over a voxel grid answers
+// each query with eight lookups - O(1), cheap enough to test hundreds of
+// candidate planes per cut. Coordinates are local: (0,0,0) is the model's
+// minimum corner.
 //
 #include "MeshData.h"
 
@@ -22,20 +18,13 @@
 
 class MaterialField {
 public:
-    // Voxelises `mesh`. `maxRes` is the resolution of the longest axis; the
-    // others are scaled to keep voxels roughly cubic.
     static MaterialField build(const MeshData &mesh, int maxRes = 96);
 
     bool   isValid() const { return !m_sum.isEmpty(); }
     double total()   const;
 
-    // Material volume inside the local-space box [lo, hi]. Quantised to the
-    // voxel grid, which is ample for deciding where to cut.
     double volumeIn(const double lo[3], const double hi[3]) const;
 
-    // Grid shape, for reporting. The resolution is FIXED on the longest axis;
-    // the other two scale with the model's proportions so voxels stay cubic, so
-    // the total count depends on the model's bounding box, not on the model.
     int    dim(int axis)  const { return m_n[axis]; }
     double side(int axis) const { return m_cell[axis]; }
     int    cellCount()    const { return m_n[0] * m_n[1] * m_n[2]; }
@@ -46,30 +35,19 @@ public:
         return n;
     }
 
-    // Voxel volume - the granularity of any answer above.
     double voxelVolume() const { return m_cell[0] * m_cell[1] * m_cell[2]; }
 
-    // True when the material inside the box forms ONE connected lump.
-    //
-    // A cut that severs a piece produces something nobody can print or joint -
-    // a "piece" made of a slice of thigh and a slice of tail with air between.
-    // Asking this before accepting a cut prevents that, where the alternative is
-    // detecting it after the Boolean and repairing it. Resolution-limited: a
-    // connection thinner than a voxel is not seen.
     bool isConnected(const double lo[3], const double hi[3]) const;
 
-    // Diagnostic: how many lumps, how big the largest is, and the total, so a
-    // "disconnected" verdict can be told from a single stray voxel.
     int lumpStats(const double lo[3], const double hi[3],
                   int *biggest, int *total) const;
 
 private:
     int             m_n[3]    = { 0, 0, 0 };
     double          m_cell[3] = { 0, 0, 0 };
-    QVector<double> m_sum;            // (n0+1)(n1+1)(n2+1) inclusive prefix sums
-    QVector<quint8> m_occ;            // n0*n1*n2 occupancy, for connectivity
+    QVector<double> m_sum;
+    QVector<quint8> m_occ;
 
-    // Voxel index range whose centres lie inside [lo, hi]; false when empty.
     bool range(const double lo[3], const double hi[3], int a[3], int b[3]) const;
 
     int occIndex(int i, int j, int k) const

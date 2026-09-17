@@ -1,3 +1,8 @@
+//
+// CageBoolean - implementation: the per-piece intersection with the model, plus
+// component labelling, welding, and the reporting of pieces that failed.
+//
+
 #include "CageBoolean.h"
 
 #include "IritGuard.h"
@@ -11,22 +16,19 @@
 
 namespace {
 
-// The boolean runs inside IritGuard, which longjmps out on an IRIT fatal error,
-// so the context holds only POD and no C++ object is live across the call.
 struct AndCtx {
-    IritPrsrObjectStruct *a;         // the cage piece
-    IritPrsrObjectStruct *b;         // the model
+    IritPrsrObjectStruct *a;
+    IritPrsrObjectStruct *b;
     IritPrsrObjectStruct *result;
-    int                   unite;     // 0 = intersect, 1 = union
+    int                   unite;
 };
 
+// The boolean itself, inside IritGuard. The context holds only POD, because a
+// longjmp cannot unwind C++ destructors.
 void doAnd(void *v)
 {
     AndCtx *c = static_cast<AndCtx *>(v);
 
-    // Both operands defensively re-closed: an object out of the tessellator or
-    // out of a previous boolean can have open vertex lists, and IRIT rejects
-    // those outright rather than coping.
     IritSolid::closeLists(c -> a);
     IritSolid::closeLists(c -> b);
 
@@ -34,16 +36,44 @@ void doAnd(void *v)
                              : IritBooleanAND(c -> a, c -> b);
 }
 
+// A piece face sitting on the model's bounding box is coplanar with the model's
+// own outer face, and coplanar faces are what IRIT's booleans handle worst - a
+// whole piece can come back empty. Nudging only those outer vertices outward
+// cures it: the sliver added lies outside the solid, so model AND piece is
+// unchanged. Interior cut faces are left exactly where they are, or neighbouring
+// pieces would overlap instead of meeting.
+//
+// Same remedy as PuzBspGrowOuterFaces in ext_lib/PuzBspCore.c, which took a cube
+// split into 8 from 7 pieces at 88.3% of the model volume to 8 at 100%.
+void growOuterFaces(MeshData *piece, const MeshData &model)
+{
+    double ext = 0.0;
+    for (int a = 0; a < 3; ++a)
+        ext = qMax(ext, double(model.bmax[a]) - double(model.bmin[a]));
+    if (ext <= 0.0)
+        return;
 
-// Labels every triangle with the connected component it belongs to. Welds
-// first: boolean output arrives with coincident-but-distinct vertices, and
-// without a weld every triangle looks like its own island.
+    const float eps = float(ext * 1e-4);        // far below any printable size
+
+    for (int v = 0; v + 2 < piece -> pos.size(); v += 3)
+        for (int a = 0; a < 3; ++a) {
+            float &c = piece -> pos[v + a];
+            if (c <= model.bmin[a] + eps)
+                c -= eps;
+            else if (c >= model.bmax[a] - eps)
+                c += eps;
+        }
+}
+
 struct Labels {
-    MeshData     mesh;      // the welded mesh the labels refer to
+    MeshData     mesh;
     QVector<int> triLabel;
     int          count = 0;
 };
 
+// Labels every triangle with its connected component. Welds first: boolean
+// output has coincident-but-distinct vertices, and without a weld every triangle
+// looks like its own island.
 Labels labelComponents(const MeshData &src)
 {
     Labels L;
@@ -60,8 +90,6 @@ Labels labelComponents(const MeshData &src)
     for (int i = 0; i < nv; ++i)
         parent[i] = i;
 
-    // Iterative find with path halving - a recursive one blows the stack on a
-    // 20k-triangle piece.
     const auto find = [&parent](int x) {
         while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
         return x;
@@ -104,16 +132,9 @@ double boxGap(const MeshData &a, const MeshData &b)
     return std::sqrt(d2);
 }
 
-
-// Joins two solids by concatenating them and welding the coincident vertices
-// along the cut face they share.
-//
-// The fallback for when a union will not run. It leaves the shared face in
-// place as an internal wall, which a clean union would have dissolved, but it
-// cannot fail and it gets both properties that matter here: the two lumps end
-// up ONE connected component, and the volume stays right - the wall is
-// traversed once in each direction, so its contribution to the divergence
-// integral cancels regardless of how either side happens to be triangulated.
+// Joins two solids by concatenating and welding along their shared face. The
+// fallback when a union will not run: it leaves an internal wall, but the result
+// is one component and the volume stays right.
 MeshData weldTogether(const MeshData &a, const MeshData &b)
 {
     MeshData m = a;
@@ -127,7 +148,7 @@ MeshData weldTogether(const MeshData &a, const MeshData &b)
     return m;
 }
 
-} // namespace
+}
 
 CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
                                             const MeshData &model,
@@ -141,11 +162,9 @@ CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
         return Outcome::Failed;
     }
 
-    // The cage pieces come from trivariate boundary tessellation, which does
-    // not guarantee a consistently wound solid. Fixing that here rather than
-    // inside fromMesh keeps the conversion itself a pure translation.
     MeshData pieceFixed = piece;
     IritSolid::orientConsistently(&pieceFixed);
+    growOuterFaces(&pieceFixed, model);
 
     IritPrsrObjectStruct *pieceObj = IritSolid::fromMesh(pieceFixed, IritSolid::Winding::Inward);
     if (pieceObj == NULL) {
@@ -153,9 +172,6 @@ CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
         return Outcome::Failed;
     }
 
-    // A fresh copy of the model per piece. IRIT's booleans consume and modify
-    // their operands, so sharing one object across every piece would corrupt it
-    // after the first intersection.
     MeshData modelFixed = model;
     IritSolid::orientConsistently(&modelFixed);
     IritPrsrObjectStruct *modelObj = IritSolid::fromMesh(modelFixed, IritSolid::Winding::Inward);
@@ -171,17 +187,18 @@ CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
     ctx.result = NULL;
     ctx.unite  = 0;
 
+    // Coplanar handling on for the call, as GuIritDllPuzzles does. Restored
+    // afterwards, which is reached even when the guard longjmps out of a fatal
+    // error, so the flag is never left set for the rest of the run.
+    const int oldCoplanar = IritBoolSetHandleCoplanarPoly(TRUE);
     const bool ok = IritGuard::run(&ctx, doAnd);
+    IritBoolSetHandleCoplanarPoly(oldCoplanar);
 
     if (ok && ctx.result != NULL && ctx.result -> U.Pl == NULL) {
-        // Succeeded with nothing in it: the cell holds no material.
         return Outcome::EmptyCell;
     }
 
     if (!ok || ctx.result == NULL) {
-        // The operands are IRIT's to free once the boolean has taken them, and
-        // after a longjmp their state is unknown, so they are deliberately left
-        // alone here. Leaking one failed piece beats a double free.
         if (error)
             *error = ok ? QStringLiteral("intersection returned nothing")
                         : (IritGuard::lastError().isEmpty()
@@ -195,9 +212,6 @@ CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
         if (error) *error = tessErr;
         return Outcome::Failed;
     }
-    // The result comes back wound the way it was fed in - inward, which is
-    // inside-out for everything downstream. Put it back on the app's
-    // convention so volumes, normals and shading stay meaningful.
     IritSolid::orientConsistently(out);
 
     if (out->isEmpty())
@@ -205,7 +219,6 @@ CageBoolean::Outcome CageBoolean::intersect(const MeshData &piece,
 
     return Outcome::Ok;
 }
-
 
 QVector<MeshData> CageBoolean::components(const MeshData &m)
 {
@@ -233,9 +246,6 @@ QVector<MeshData> CageBoolean::components(const MeshData &m)
     }
     for (MeshData &d : out) {
         d.finalize();
-        // Each component must stand on its own as an outward-wound solid: it is
-        // about to be measured and possibly merged independently of the mesh it
-        // came out of.
         IritSolid::orientConsistently(&d);
     }
 
@@ -246,9 +256,7 @@ QVector<MeshData> CageBoolean::components(const MeshData &m)
     return out;
 }
 
-
-// Boolean union, used to reattach a detached lump to its neighbour. Same
-// winding convention and the same guarded call as the intersection.
+// Boolean union, used to reattach a detached lump to its neighbour.
 bool CageBoolean::unite(const MeshData &a, const MeshData &b, MeshData *out,
                         double fineNess, QString *error)
 {
@@ -290,6 +298,8 @@ bool CageBoolean::unite(const MeshData &a, const MeshData &b, MeshData *out,
     return !out->isEmpty();
 }
 
+// Section 5 for every piece. Failure is local: a piece whose boolean fails or
+// comes back empty is reported and skipped.
 CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
                                               const MeshData &model,
                                               double fineNess)
@@ -304,18 +314,6 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
     QVector<PuzzlePiece> kept;
     kept.reserve(pieces->size());
 
-    // Anything under this is debris rather than a piece, and is discarded.
-    //
-    // Measured against an AVERAGE PIECE, not against the model, because that is
-    // what decides whether a lump is worth keeping: half a percent of a piece is
-    // far below anything that can be printed or handled. On the armadillo at 6
-    // pieces the floor lands near 200 - which discards a 29-unit speck that was
-    // otherwise being promoted to a seventh "piece", while keeping the genuine
-    // detached lumps that run 500..1100.
-    //
-    // The cost is explicit: the discarded volume is reported, so a run that
-    // throws away more than a rounding error says so rather than quietly
-    // returning less than the model.
     const double modelVol = qAbs(IritSolid::signedVolume(model));
     const double noiseFloor =
         0.005 * modelVol / qMax(1, int(pieces->size()));
@@ -329,10 +327,6 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
             continue;
         }
 
-        // Does this cell hold any of the model at all? Used only to sanity
-        // check a drop: an empty result for a cell that demonstrably contains
-        // model vertices is a failure, not an empty cell, and is reported as
-        // one rather than quietly discarding material.
         bool cellHasModel = false;
         for (int v = 0; v + 2 < model.pos.size() && !cellHasModel; v += 3)
             cellHasModel =
@@ -345,7 +339,7 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         const Outcome o = intersect(p.mesh, model, &trimmed, fineNess, &err);
 
         if (o == Outcome::EmptyCell && !cellHasModel) {
-            ++r.dropped;                      // correct: nothing there to keep
+            ++r.dropped;
             continue;
         }
         if (o != Outcome::Ok) {
@@ -355,13 +349,10 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
                     ? QStringLiteral("empty intersection, but the cell does "
                                      "contain model geometry")
                     : err);
-            kept.append(p);                   // keeps its boxy geometry
+            kept.append(p);
             continue;
         }
 
-        // One cell can hold several disjoint lumps of material. Keep the
-        // largest as the piece, bin the numerical debris, and hold the rest
-        // aside to be given back to whichever neighbour they belong to.
         QVector<MeshData> parts = components(trimmed);
         if (parts.isEmpty()) {
             ++r.dropped;
@@ -387,12 +378,6 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         ++r.intersected;
     }
 
-    // Give every detached lump back to the piece it is actually attached to.
-    // The lump was severed by a cut plane, so the material continues into the
-    // neighbour on the other side of it: that neighbour is the one whose box
-    // the lump touches. A union rather than a concatenation, so the shared cut
-    // face is dissolved and the result is one solid rather than two boxes
-    // glued together.
     for (const MeshData &lump : lumps) {
         int    best     = -1;
         double bestGap  = 1e300;
@@ -403,29 +388,13 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
 
         bool joined = false;
         if (best >= 0) {
-            // Welded, not unioned. IritBooleanOR is the right operation here in
-            // principle, but the operands share a cut face exactly, and that is
-            // the configuration IRIT's booleans handle worst: across every run
-            // measured it declined 100% of the time - and it does so by way of
-            // an assert inside bool1low.c, which in a GUI build puts up a modal
-            // dialog the guard cannot suppress (IRIT's static libs carry their
-            // own CRT, so _CrtSetReportMode here does not reach it). Calling it
-            // therefore bought nothing and cost a crash.
-            //
-            // The weld leaves the shared face as an internal wall where a union
-            // would have dissolved it. Both properties that matter survive: the
-            // result is ONE connected component, and the volume is right - the
-            // wall is traversed once in each direction, so it cancels.
             MeshData merged = weldTogether(kept[best].mesh, lump);
             if (components(merged).size() == 1)
                 ++r.lumpsWelded;
             else
-                merged = MeshData();              // did not actually join
+                merged = MeshData();
 
             if (!merged.isEmpty()) {
-                // Reattaching must conserve volume exactly. Checked rather than
-                // assumed: an inside-out lump subtracts instead of adding, and
-                // the only symptom is a total that looks merely plausible.
                 const double want = meshVolume(kept[best].mesh) + meshVolume(lump);
                 const double got  = meshVolume(merged);
                 if (qAbs(got - want) > 1e-6 * qMax(1.0, want))
@@ -445,9 +414,6 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         }
 
         if (!joined) {
-            // Touched nothing, or the union would not have produced a single
-            // solid. Standing it up as its own piece is honest; silently
-            // gluing it to a neighbour it does not adjoin would not be.
             PuzzlePiece stray;
             stray.mesh = lump;
             for (int a = 0; a < 3; ++a) {
@@ -459,8 +425,6 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         }
     }
 
-    // Postcondition. Every piece must be exactly one solid; anything else is a
-    // piece nobody can print or assemble, and it gets said out loud.
     for (const PuzzlePiece &p : kept)
         if (components(p.mesh).size() != 1)
             ++r.multiPart;

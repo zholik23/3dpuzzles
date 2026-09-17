@@ -1,34 +1,15 @@
+//
+// PlannerOrder - implementation: greedy peeling into a plan, replay to verify it,
+// and the description lines.
+//
+
 #include "PlannerOrder.h"
 
 namespace Planner {
 
-// A note on what the search does and does not settle.
-//
-// The loop is greedy and monotone: at each step it takes the first piece that
-// has a free direction, and never reconsiders. Two consequences worth being
-// straight about.
-//
-//   * Success is a genuine witness. The order it returns is a real removal
-//     sequence under the model that was passed in - each step was checked
-//     against the pieces still present at that moment.
-//   * Failure is NOT a proof of non-assemblability in general. It says this
-//     greedy descent got stuck; a different choice earlier might not have. It
-//     also only covers MONOTONE sequences, where a piece goes straight out and
-//     never moves again, and only ONE piece at a time - a puzzle needing two
-//     sub-assemblies mated together is outside the model.
-//
-// So the log reports "no piece is removable" as a fact about this run, not as a
-// theorem about the puzzle.
-//
-// Separately, and worth knowing before reading any result: for AXIS-ALIGNED
-// boxes the translational model can never reach that failure. The piece with
-// the largest hi[x] cannot have a neighbour on its +X face, because such a
-// neighbour would need a larger hi[x] still. So at every step at least one
-// piece is free, and the greedy loop always completes. A non-assemblable answer
-// from stages 1-3 as they stand would mean a bug, not a hard puzzle. The
-// failure branch is exercised by AlwaysBlocking, and will start doing real work
-// when the swept-volume model replaces the placeholder.
-
+// Greedy monotone peeling. Success is a genuine witness - a real removal
+// sequence under the model passed in. Failure means this greedy descent got
+// stuck, not that the puzzle cannot be assembled.
 Plan extract(const Graph &g, const BlockingModel &model)
 {
     Plan plan;
@@ -78,8 +59,6 @@ Plan extract(const Graph &g, const BlockingModel &model)
         --remaining;
     }
 
-    // Assembly is the removal sequence played backwards, each piece going in
-    // the way it came out.
     plan.assembly.reserve(plan.removal.size());
     for (int i = plan.removal.size() - 1; i >= 0; --i) {
         Step s;
@@ -91,6 +70,8 @@ Plan extract(const Graph &g, const BlockingModel &model)
     return plan;
 }
 
+// Re-walks a plan step by step, checking each step was legal against the pieces
+// still present at that moment.
 int replay(const Graph &g, const BlockingModel &model, const Plan &plan,
            QString *why)
 {
@@ -159,4 +140,4 @@ QStringList Plan::describe(int maxSteps) const
     return out;
 }
 
-} // namespace Planner
+}

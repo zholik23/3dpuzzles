@@ -1,3 +1,8 @@
+//
+// AssemblyOrder - implementation: runs the three Planner stages, counts phantom
+// contacts, and formats the result with its translational caveat.
+//
+
 #include "AssemblyOrder.h"
 
 #include "PlannerGraph.h"
@@ -8,17 +13,10 @@
 
 namespace {
 
-// Does `piece` actually have material at the shared face?
-//
-// The contact was found between two axis-aligned CELLS. After the Boolean the
-// piece may have been pulled back from that face entirely, in which case the
-// cells meet but the pieces do not and the contact is a phantom - it will
-// register as blocking when nothing is physically in the way.
-//
-// Answered by looking for a vertex of the piece's own mesh that lies on the
-// plane, inside the overlap rectangle. A vertex is enough: if the surface
-// reaches the plane at all it has vertices there, because the plane is one of
-// the cutting planes and the Boolean lays an edge loop along it.
+// Does the piece actually have material at the shared face? The contact was
+// found between axis-aligned cells; after the boolean the piece may have been
+// pulled back from that face, making the contact a phantom that registers as
+// blocking when nothing is physically in the way.
 bool materialAtFace(const PuzzlePiece &p, int axis, double plane,
                     const double lo2[2], const double hi2[2], double tol)
 {
@@ -45,7 +43,7 @@ QString dirList(Planner::DirMask m, bool wantBlocked)
     return out.isEmpty() ? QStringLiteral("none") : out.join(QLatin1Char(' '));
 }
 
-} // namespace
+}
 
 QString AssemblyOrder::caveat()
 {
@@ -66,7 +64,6 @@ AssemblyOrder::Result AssemblyOrder::run(const QVector<PuzzlePiece> &pieces,
 {
     Result r;
 
-    // ---------------------------------------------------------------- step 1
     const Planner::Graph g = Planner::build(pieces, tol, 0.0);
     r.contacts = g.contactCount();
 
@@ -92,16 +89,6 @@ AssemblyOrder::Result AssemblyOrder::run(const QVector<PuzzlePiece> &pieces,
                                                 : nb.join(QStringLiteral(", ")));
     }
 
-    // How many of those contacts are between cells that touch while the pieces
-    // inside them do not. Must be zero on an axis-aligned model.
-    //
-    // The contact planes are in the units of p0/p1 - the trivariate's PARAMETER
-    // domain on the cage path - while the meshes are in world coordinates, so
-    // the two cannot be compared directly. The map between them is recovered
-    // from the pieces themselves: the cells tile the cage, and the trimmed
-    // pieces together span the model, so the extremes of each give the two
-    // boxes the map runs between. On the mesh path, where p0/p1 are already
-    // world, this comes out as the identity.
     double pLo[3], pHi[3], wLo[3], wHi[3];
     bool haveBox = false;
     for (const PuzzlePiece &q : pieces) {
@@ -144,8 +131,6 @@ AssemblyOrder::Result AssemblyOrder::run(const QVector<PuzzlePiece> &pieces,
             const double hi2[2] = { toWorld(b0, qMin(A.p1[b0], B.p1[b0])),
                                     toWorld(b1, qMin(A.p1[b1], B.p1[b1])) };
 
-            // A world-space tolerance: a fraction of the thinner piece, so it
-            // scales with the model instead of assuming its units.
             const double faceTol =
                 qMax(tol * scaleOf(k.axis), 1e-3 * k.depth * scaleOf(k.axis));
 
@@ -161,7 +146,6 @@ AssemblyOrder::Result AssemblyOrder::run(const QVector<PuzzlePiece> &pieces,
             "towards stuck")
                 .arg(r.phantomContacts).arg(g.contactCount());
 
-    // ---------------------------------------------------------------- step 2
     r.blockingLog << QStringLiteral("STEP 2  blocking under: %1").arg(model.name());
     r.blockingLog << QStringLiteral("        %1").arg(model.caveat());
 
@@ -186,7 +170,6 @@ AssemblyOrder::Result AssemblyOrder::run(const QVector<PuzzlePiece> &pieces,
             r.blockingLog << QStringLiteral("             %1").arg(by.join(QStringLiteral(", ")));
     }
 
-    // ---------------------------------------------------------------- step 3
     const Planner::Plan plan = Planner::extract(g, model);
     r.assemblable = plan.complete;
     for (const Planner::Step &s : plan.removal)

@@ -1,6 +1,11 @@
+//
+// Trivariate - implementation: domain and evaluation, tessellation, and the three
+// sources (file, primitive, bounding cage), each run under IritGuard.
+//
+
 #include "Trivariate.h"
 #include "IritGuard.h"
-#include "IritMesh.h"          // brings in the IRIT C headers
+#include "IritMesh.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -9,8 +14,6 @@ extern "C" {
 #include "inc_irit/triv_lib.h"
 #include "inc_irit/cagd_lib.h"
 }
-
-// --------------------------------------------------------------- lifetime --
 
 Trivariate::~Trivariate()
 {
@@ -49,8 +52,6 @@ Trivariate Trivariate::adopt(void *tv, const QString &label)
     return t;
 }
 
-// ---------------------------------------------------------------- queries --
-
 void Trivariate::domain(double d[6]) const
 {
     d[0] = d[2] = d[4] = 0.0;
@@ -80,7 +81,7 @@ bool Trivariate::evaluate(double u, double v, double w, double p[3]) const
 
     const TrivTVStruct *tv = static_cast<const TrivTVStruct *>(m_tv);
     if (CAGD_NUM_OF_PT_COORD(tv -> PType) < 3)
-        return false;                       // scalar field: no position to read
+        return false;
 
     CagdRType r[CAGD_MAX_PT_SIZE], *pr = r, e3[3];
     IritTrivTVEvalToData(tv, u, v, w, r);
@@ -97,9 +98,6 @@ bool Trivariate::tessellate(MeshData *out, double fineNess, QString *error) cons
         return false;
     }
 
-    // IritPrsrGenTRIVARObject takes ownership of what it is handed, and
-    // IritMesh::tessellate then consumes the object - so hand over a copy and
-    // keep ours.
     TrivTVStruct *copy = IritTrivTVCopy(static_cast<const TrivTVStruct *>(m_tv));
     if (copy == NULL) {
         if (error) *error = QStringLiteral("Could not copy the trivariate.");
@@ -117,8 +115,6 @@ bool Trivariate::tessellate(MeshData *out, double fineNess, QString *error) cons
     return IritMesh::tessellate(obj, out, fineNess, error);
 }
 
-// ---------------------------------------------------------------- sources --
-
 QStringList Trivariate::primitiveKinds()
 {
     return { QStringLiteral("Sphere"),   QStringLiteral("Torus"),
@@ -129,7 +125,7 @@ QStringList Trivariate::primitiveKinds()
 namespace {
 
 struct PrimCtx {
-    int           kind;             // index into primitiveKinds()
+    int           kind;
     TrivTVStruct *result;
 };
 
@@ -172,7 +168,8 @@ void doRead(void *v)
     c -> objs = IritPrsrGetObjects2(c -> path);
 }
 
-// Depth-limited search for the first trivariate with real (>= 3D) geometry.
+// Depth-limited search for the first trivariate carrying real (3D or more)
+// geometry.
 const TrivTVStruct *findGeometricTV(const IritPrsrObjectStruct *o,
                                     int *scalarsSeen,
                                     int  depth = 0)
@@ -208,7 +205,7 @@ const TrivTVStruct *findGeometricTV(const IritPrsrObjectStruct *o,
     return NULL;
 }
 
-} // namespace
+}
 
 Trivariate Trivariate::primitive(const QString &kind, QString *error)
 {
@@ -229,6 +226,8 @@ Trivariate Trivariate::primitive(const QString &kind, QString *error)
     return adopt(c.result, kind + QStringLiteral(" (primitive trivariate)"));
 }
 
+// A trilinear box over the mesh. A zero-thickness axis would make the trivariate
+// degenerate, so such an axis is given a sliver of the diagonal.
 Trivariate Trivariate::boundingCage(const MeshData &mesh, QString *error)
 {
     if (mesh.isEmpty()) {
@@ -240,8 +239,6 @@ Trivariate Trivariate::boundingCage(const MeshData &mesh, QString *error)
     for (int k = 0; k < 3; ++k) {
         c.lo[k] = mesh.bmin[k];
         c.hi[k] = mesh.bmax[k];
-        // A zero-thickness axis (a flat plate, a planar sketch) would make a
-        // degenerate trivariate, so give it a sliver of the diagonal.
         if (c.hi[k] - c.lo[k] < 1e-9) {
             const double pad = 0.005 * double(mesh.diagonal());
             c.lo[k] -= pad;
@@ -328,5 +325,3 @@ bool Trivariate::saveToFile(const QString& path, QString* error) const
 
     return true;
 }
-
-

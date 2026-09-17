@@ -1,13 +1,11 @@
 #pragma once
 //
-// AppController - the app-level model. Owns the loaded mesh, the trivariate
-// that stands in for it, and the pieces the divider produced.
-//
-// The mesh and the trivariate are kept side by side on purpose: the mesh is the
-// reference the trivariate fit will eventually be checked against, so neither
-// replaces the other.
+// AppController - the app-level model: the loaded mesh, the trivariate that
+// stands in for it, and the pieces the divider produced. Mesh and trivariate are
+// kept side by side because neither replaces the other.
 //
 #include "CageBoolean.h"
+#include "DivisionReport.h"
 #include "CutWarp.h"
 #include "IritJoint.h"
 #include "MeshData.h"
@@ -32,90 +30,48 @@ class AppController : public QObject {
     Q_PROPERTY(QStringList nameFilters     READ nameFilters     CONSTANT)
     Q_PROPERTY(QStringList primitiveKinds  READ primitiveKinds  CONSTANT)
 
-    // True when Divide will clip the mesh rather than region-extract a
-    // trivariate - i.e. no V-rep has been chosen. Lets the UI say which.
     Q_PROPERTY(bool    dividesMesh   READ dividesMesh   NOTIFY trivariateChanged)
     Q_PROPERTY(bool    hasTrivariate READ hasTrivariate NOTIFY trivariateChanged)
     Q_PROPERTY(QString trivariateName READ trivariateName NOTIFY trivariateChanged)
     Q_PROPERTY(QString trivariateInfo READ trivariateInfo NOTIFY trivariateChanged)
 
-    // How the cuts are shaped. Flat is the default; wave and grid bend them.
     Q_PROPERTY(QString cutShapeInfo READ cutShapeInfo NOTIFY cutShapeChanged)
 
-    // Joints. When on, every shared face gets Elber's pin/hole pair cut into
-    // the two pieces by an IRIT boolean, straight after the division runs.
     Q_PROPERTY(bool    addJoints  READ addJoints  WRITE setAddJoints NOTIFY jointsChanged)
     Q_PROPERTY(QString jointNote  READ jointNote  NOTIFY piecesChanged)
 
     Q_PROPERTY(int     pieceCount  READ pieceCount  NOTIFY piecesChanged)
-    // Saving only makes sense once a division exists.
     Q_PROPERTY(bool    canSave     READ canSave     NOTIFY piecesChanged)
     Q_PROPERTY(QStringList saveFilters READ saveFilters CONSTANT)
     Q_PROPERTY(QString divisionInfo READ divisionInfo NOTIFY piecesChanged)
 
-    // The planner pictures of the last division as file URLs, in the order
-    // pieces, graph, blocking, removal order - shown in tabs over the view.
-    // Each carries a ?v= counter so QML reloads a picture rewritten under
-    // the same file name. Empty until a division has written them.
     Q_PROPERTY(QStringList planFigures   READ planFigures   NOTIFY piecesChanged)
     Q_PROPERTY(QString     planFolderUrl READ planFolderUrl NOTIFY piecesChanged)
+    Q_PROPERTY(QString     reportUrl     READ reportUrl     NOTIFY piecesChanged)
 
 public:
     explicit AppController(QObject *parent = nullptr);
 
-    // --- loading ---------------------------------------------------------
     Q_INVOKABLE void loadFile(const QUrl &url);
     Q_INVOKABLE void loadPath(const QString &path);
 
-    // --- choosing what to divide -----------------------------------------
-    // Any trivariate stored in the file that is currently loaded.
     Q_INVOKABLE void useTrivariateFromFile();
-    // A known shape, for developing the divider without a fit.
     Q_INVOKABLE void usePrimitive(const QString &kind);
-    // A box over the loaded mesh's extent. Stands in for Increment 3: it has
-    // the model's size but not its shape.
     Q_INVOKABLE void useBoundingCage();
-    Q_INVOKABLE void showWholeModel();          // back to the undivided mesh
+    Q_INVOKABLE void showWholeModel();
 
-    // --- saving ----------------------------------------------------------
-    // Writes the divided model out. The format follows the extension: .itd,
-    // .obj or .stl. `separateFiles` splits an STL into one file per piece,
-    // which is what a slicer wants when the pieces go to a printer.
     Q_INVOKABLE void savePieces(const QUrl &url, bool separateFiles, bool spread);
 
-    // --- dividing --------------------------------------------------------
-    //
-    // These divide whatever is currently the subject: a trivariate if one has
-    // been chosen (Elber's method, real solid pieces), otherwise the loaded
-    // mesh (clipped pieces that keep the model's true shape). Which one ran is
-    // reported in divisionInfo.
-    // Every piece the same size and shape, cut by straight planes.
     Q_INVOKABLE void divideUniform(int nu, int nv, int nw);
 
-    // Irregular: cut positions pushed off the grid so no two pieces are the
-    // same size, and - when `curvePercent` is above zero - the cuts themselves
-    // bent into smooth irregular surfaces rather than planes. One seed drives
-    // both, so the same seed always reproduces the same puzzle.
-    // `pieces` is a target count, not a grid: the domain is split recursively,
-    // one cell at a time, so the sizes are independent of each other and the
-    // adjacency comes out irregular. Global cut planes cannot do that.
     Q_INVOKABLE void divideRandom(int pieces);
 
-    // Rolls a new seed so the next divide falls differently. The seed is kept
-    // internal: it is a number to manage, not a decision to make, and the log
-    // still records it so any layout can be reproduced.
     Q_INVOKABLE void newLayout();
 
-    // Non-uniform by physical size: cuts land where the accumulated real-world
-    // extent reaches `maxSizeMM`, so pieces come out roughly equal in actual
-    // size rather than in parameter space. `maxPerAxis` is a safety stop - a
-    // small limit on a big model can otherwise ask for thousands of pieces.
     Q_INVOKABLE void divideBySize(double maxSizeMM, int maxPerAxis);
 
-    // --- joints ----------------------------------------------------------
     void setAddJoints(bool on);
 
-    // --- read side -------------------------------------------------------
     const MeshData &mesh()   const { return m_mesh; }
     const QVector<PuzzlePiece> &pieces() const { return m_pieces; }
 
@@ -135,6 +91,7 @@ public:
     QString divisionInfo() const { return m_divisionInfo; }
     QStringList planFigures()   const { return m_planFigures; }
     QString     planFolderUrl() const { return m_planFolderUrl; }
+    QString     reportUrl()     const { return m_reportUrl; }
     bool    canSave()      const { return !m_pieces.isEmpty(); }
     QStringList saveFilters() const { return PieceExport::nameFilters(); }
 
@@ -156,34 +113,22 @@ private:
     void setError(const QString &msg);
     void adoptTrivariate(Trivariate tv, const QString &sourceDesc);
     void runDivision(const DivisionSpec &spec);
-    // The mesh the cuts are actually applied to: the model, warped if the cut
-    // shape asks for it. Division planes have to be measured on this, not on
-    // the original, because the warp moves the bounds.
     MeshData workingMesh() const;
     void runMeshDivision(const MeshDivisionSpec &spec, const MeshData &work);
     void runCellDivision(const QVector<CellBox> &cells, const MeshData &work,
                          const QString &note);
-    // The V-rep equivalent: BSP cells in the trivariate's parameter domain.
     void runTrivCellDivision(const QVector<CellBox> &cells, const QString &note);
     void describePieces(const QString &note, int gridCells, const QString &warning);
-    // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
-    // pieces are described, so the reported counts are of the jointed result.
     void applyJoints();
-    // After every division: log the planner's three stages and draw
-    // them as pictures beside the model (PlannerFigure). Sets m_figureNote.
     void planAndDrawFigures();
+    void writeDivisionReport();
 
-    // Dumps the chosen cut positions and the resulting piece sizes to the debug
-    // output, so an even division can be told from an uneven one by reading.
     void logDivision(const QString &what, const double domain[6],
                      const QVector<double> cuts[3]) const;
     void logCells(const QString &what, const QVector<CellBox> &cells) const;
     void logPieceSizes() const;
 
     MeshData             m_mesh;
-    // The polygonal model as loaded, kept apart from m_mesh because adopting a
-    // trivariate REPLACES m_mesh with the cage's tessellation. Elber's Section 5
-    // needs the original around afterwards to intersect the cage pieces with.
     MeshData             m_sourceMesh;
     CutWarp              m_warp;
     quint32              m_layoutSeed = 7;
@@ -197,24 +142,18 @@ private:
     QString m_trivInfo;
     QString m_divisionInfo;
     QString m_booleanNote;
-    QString m_figureNote;       // where the planner figures went
-    QStringList m_planFigures;  // file URLs for the view's tabs
+    QString m_figureNote;
+    QStringList m_planFigures;
     QString m_planFolderUrl;
-    int     m_figureVersion = 0; // bumps every write, busts QML's cache
+    QString m_reportUrl;
+    DivisionStats m_stats;
+    int     m_figureVersion = 0;
     bool    m_hasError = false;
 
     JointParams m_joint;
     QString     m_jointNote;
-    // On by default: dividing a model is meant to produce jointed pieces.
-    // Off by default: the Joints control is hidden, so nothing can turn
-    // this off at runtime. The joint code and the addJoints property are
-    // untouched - restoring the checkbox is enough to bring it back.
     bool        m_addJoints = false;
 
-    // IRIT's tessellation fineness (higher = more polygons). Pieces get a
-    // lower setting than the whole model: each covers a fraction of the domain
-    // but is tessellated to the same density, so N pieces at the model's
-    // setting would cost roughly N times the model's polygon count.
     static constexpr double kModelFineNess = 20.0;
     static constexpr double kPieceFineNess = 12.0;
 };

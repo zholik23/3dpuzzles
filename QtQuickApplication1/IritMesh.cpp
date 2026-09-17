@@ -1,13 +1,13 @@
+//
+// IritMesh - implementation: tessellates IRIT's freeform hierarchy and welds the
+// result into a MeshData.
+//
+
 #include "IritMesh.h"
 #include "IritGuard.h"
 
 #include <QHash>
 #include <QtGlobal>
-
-// ------------------------------------------------------- guarded IRIT work --
-//
-// Conversion can trip an IRIT fatal error, so it runs inside IritGuard::run,
-// which longjmps out on failure. Its callback therefore touches only POD.
 
 struct ConvCtx {
     IritPrsrObjectStruct     *in;
@@ -15,9 +15,9 @@ struct ConvCtx {
     IPFreeformConvStateStruct state;
 };
 
-// Tessellates freeform geometry and triangulates every polygon over the whole
-// forest. IritPrsrConvertFreeFormHierachy CONSUMES the object it is handed and
-// returns a (possibly longer) chain, so the caller frees only `out`.
+// Tessellates freeform geometry and triangulates every polygon, inside
+// IritGuard. IritPrsrConvertFreeFormHierachy consumes the object it is handed
+// and returns a possibly longer chain.
 static void doConvert(void *v)
 {
     ConvCtx *c = static_cast<ConvCtx *>(v);
@@ -27,12 +27,9 @@ static void doConvert(void *v)
         IritPrsrObjectStruct *next = o -> Pnext, *conv;
 
         o -> Pnext = NULL;
-        // TriangleOnly is deliberately FALSE: it routes through
-        // IritGeomConvertPolysToTriangles, which access-violates on some
-        // valid inputs. Harvester::triangulate does the job instead.
         conv = IritPrsrConvertFreeFormHierachy(o, &c -> state,
-                                               FALSE,     /* TriangleOnly */
-                                               FALSE);    /* Regularize   */
+                                               FALSE,
+                                               FALSE);
         while (conv != NULL) {
             IritPrsrObjectStruct *cNext = conv -> Pnext;
 
@@ -63,9 +60,9 @@ inline size_t qHash(const VKey &k, size_t seed = 0)
     return qHashMulti(seed, k.x, k.y, k.z);
 }
 
-// Walks the raw parse result and names what is in it. Runs BEFORE conversion,
-// because conversion consumes the objects - and when nothing displayable comes
-// out the far end, this inventory is the only thing that can tell the user why.
+// Walks the raw parse result and names what is in it. Runs before conversion,
+// which consumes the objects - when nothing displayable comes out, this is the
+// only thing that can say why.
 QStringList inventoryImpl(const IritPrsrObjectStruct *o, int depth = 0)
 {
     QStringList out;
@@ -80,8 +77,6 @@ QStringList inventoryImpl(const IritPrsrObjectStruct *o, int depth = 0)
                         const_cast<IritPrsrObjectStruct *>(o), i);
                 if (child == NULL)
                     break;
-                // A list element still points at its siblings through Pnext,
-                // so it is described on its own rather than walked as a chain.
                 IritPrsrObjectStruct tmp = *child;
                 tmp.Pnext = NULL;
                 for (const QString &n : inventoryImpl(&tmp, depth + 1))
@@ -93,9 +88,6 @@ QStringList inventoryImpl(const IritPrsrObjectStruct *o, int depth = 0)
 
         QString name = QString::fromLatin1(IritPrsrGetObjectTypeAsString(o));
 
-        // A scalar (E1) trivariate is a volumetric *function*, not a solid: it
-        // has no boundary geometry to tessellate. Worth calling out by name -
-        // it is a shape this project cares about but cannot simply display.
         if (IRIT_PRSR_IS_TRIVAR_OBJ(o) && o -> U.Trivars != NULL) {
             const int nCoord = CAGD_NUM_OF_PT_COORD(o -> U.Trivars -> PType);
             if (nCoord < 3)
@@ -114,7 +106,7 @@ public:
 
     void walk(const IritPrsrObjectStruct *o, int depth = 0)
     {
-        if (depth > 64)                 // malformed file with a cyclic tree
+        if (depth > 64)
             return;
 
         for (; o != NULL; o = o -> Pnext) {
@@ -137,18 +129,13 @@ public:
                 ++m_mesh -> objectCount;
             }
             else if (IRIT_PRSR_IS_FFGEOM_OBJ(o)) {
-                // Freeform that survived conversion (an unsupported subtype).
-                // Counted so the UI can say it was not displayed.
                 ++m_mesh -> freeformCount;
                 ++m_mesh -> objectCount;
             }
-            // Numeric / matrix / string objects are ignored on purpose.
         }
     }
 
 private:
-    // A list element carries its own Pnext into the parent's list; following it
-    // here would re-walk siblings, so children are visited one at a time.
     void walkOne(const IritPrsrObjectStruct *o, int depth)
     {
         if (o == NULL || depth > 64)
@@ -177,13 +164,8 @@ private:
         }
     }
 
-    // Vertices are welded on exact coordinates. STL in particular repeats every
-    // vertex once per facet, so welding is what turns a triangle soup into a
-    // mesh with a meaningful edge list - and later, a cell-adjacency graph.
     uint32_t vertexFor(const IrtPtType p)
     {
-        // -0.0f and 0.0f compare equal but hash differently, which would put
-        // two "equal" keys in the hash and silently unweld a seam. Normalise.
         const auto z = [](double v) { return float(v) + 0.0f; };
         const VKey k { z(p[0]), z(p[1]), z(p[2]) };
         auto it = m_index.constFind(k);
@@ -200,9 +182,9 @@ private:
             m_idx.clear();
             for (const IritPrsrVertexStruct *v = pl -> PVertex; v != NULL; v = v -> Pnext) {
                 m_idx.push_back(vertexFor(v -> Coord));
-                if (m_idx.size() > 4096)            // runaway list
+                if (m_idx.size() > 4096)
                     break;
-                if (v -> Pnext == pl -> PVertex)    // IRIT may close the loop
+                if (v -> Pnext == pl -> PVertex)
                     break;
             }
             if (m_idx.size() < 3)
@@ -214,21 +196,13 @@ private:
 
     void emitTri(uint32_t a, uint32_t b, uint32_t c)
     {
-        if (a == b || b == c || a == c)             // degenerate after welding
+        if (a == b || b == c || a == c)
             return;
         m_mesh -> tris.push_back(a);
         m_mesh -> tris.push_back(b);
         m_mesh -> tris.push_back(c);
     }
 
-    // Ear clipping, done here rather than by IRIT.
-    //
-    // ConvertFreeFormHierachy's TriangleOnly flag routes through
-    // IritGeomConvertPolysToTriangles -> IritGeomConvexPolyObjectN, which
-    // access-violates on some perfectly valid inputs (data/pl_cncyl.itd and
-    // data/pl_sold3.itd both kill the process). So polygons arrive here
-    // untriangulated. Ear clipping is also correct for non-convex faces,
-    // which a naive triangle fan is not.
     void triangulate(const QVector<uint32_t> &loop)
     {
         const int n = loop.size();
@@ -239,8 +213,6 @@ private:
             return;
         }
 
-        // Newell normal, then drop the dominant axis to get a 2D projection
-        // that cannot collapse the polygon to a line.
         double nx = 0.0, ny = 0.0, nz = 0.0;
         for (int i = 0; i < n; ++i) {
             const float *a = &m_mesh -> pos[loop[i] * 3];
@@ -262,7 +234,6 @@ private:
             m_py[i] = double(p[v]);
         }
 
-        // Work on a mutable ring of positions into `loop`, wound CCW in 2D.
         double area2 = 0.0;
         for (int i = 0, j = n - 1; i < n; j = i++)
             area2 += m_px[j] * m_py[i] - m_px[i] * m_py[j];
@@ -272,7 +243,7 @@ private:
             m_ring[i] = (area2 >= 0.0) ? i : (n - 1 - i);
 
         int remaining = n;
-        int guard     = 2 * n;              // no ear found in a full pass
+        int guard     = 2 * n;
 
         while (remaining > 3 && guard-- > 0) {
             bool clipped = false;
@@ -294,7 +265,7 @@ private:
             }
 
             if (!clipped)
-                break;      // self-intersecting or degenerate: fan the rest
+                break;
         }
 
         for (int i = 1; i + 1 < remaining; ++i)
@@ -311,13 +282,12 @@ private:
     {
         const double area = cross2(ia, ib, ic);
         if (area <= 0.0)
-            return false;                           // reflex or collinear
+            return false;
 
         for (int k = 0; k < remaining; ++k) {
             const int ip = m_ring[k];
             if (ip == ia || ip == ib || ip == ic)
                 continue;
-            // Inside test via the three edge signs of the candidate ear.
             const double d0 = (m_px[ib] - m_px[ia]) * (m_py[ip] - m_py[ia])
                             - (m_py[ib] - m_py[ia]) * (m_px[ip] - m_px[ia]);
             const double d1 = (m_px[ic] - m_px[ib]) * (m_py[ip] - m_py[ib])
@@ -354,28 +324,29 @@ private:
 
     MeshData            *m_mesh;
     QHash<VKey, quint32>  m_index;
-    QVector<uint32_t>     m_idx;      // one polygon's welded vertex indices
-    QVector<double>       m_px, m_py; // that polygon projected to 2D
-    QVector<int>          m_ring;     // ear-clipping working ring
+    QVector<uint32_t>     m_idx;
+    QVector<double>       m_px, m_py;
+    QVector<int>          m_ring;
 };
 
-} // namespace
-// --------------------------------------------------------------- interface --
+}
 
+// Welds vertices on exact coordinates, which is what turns a triangle soup into
+// a mesh with a usable edge list.
 bool IritMesh::tessellate(IritPrsrObjectStruct *objs,
                           MeshData             *out,
                           double                fineNess,
                           QString              *error)
 {
     if (objs == NULL)
-        return true;                            // nothing to do, not a failure
+        return true;
 
     ConvCtx cc;
     cc.in    = objs;
     cc.out   = NULL;
-    cc.state = IritPrsrFFCState;             // IRIT's defaults, then our tweaks
+    cc.state = IritPrsrFFCState;
     cc.state.Talkative           = FALSE;
-    cc.state.DumpObjsAsPolylines = FALSE;    // we want polygons, not isolines
+    cc.state.DumpObjsAsPolylines = FALSE;
     cc.state.DrawFFGeom          = TRUE;
     cc.state.DrawFFMesh          = FALSE;
     cc.state.ComputeNrml         = TRUE;
@@ -383,9 +354,6 @@ bool IritMesh::tessellate(IritPrsrObjectStruct *objs,
     cc.state.FineNess            = fineNess;
 
     if (!IritGuard::run(&cc, doConvert)) {
-        // doConvert already took ownership of whatever it consumed, and the
-        // partial chain is unreachable after the longjmp. Leaking a failed
-        // parse beats freeing a half-consumed forest.
         if (error != nullptr)
             *error = IritGuard::lastError();
         return false;

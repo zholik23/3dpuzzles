@@ -1,3 +1,8 @@
+//
+// MeshDivider - implementation: triangle clipping against a box, capping of the
+// cut faces, the spec builders, and the cell and BSP division entry points.
+//
+
 #include "MeshDivider.h"
 
 #include <QHash>
@@ -40,16 +45,16 @@ void clipHalfSpace(const QVector<V3> &in, QVector<V3> &out,
         if ((da >= 0.0) != (db >= 0.0)) {
             const double t = da / (da - db);
             V3 p = lerp(a, b, t);
-            p = { axis == 0 ? val : p.x,          // pin exactly onto the plane,
-                  axis == 1 ? val : p.y,          // so cap detection can match
-                  axis == 2 ? val : p.z };        // on equality later
+            p = { axis == 0 ? val : p.x,
+                  axis == 1 ? val : p.y,
+                  axis == 2 ? val : p.z };
             out.append(p);
         }
     }
 }
 
-// Clips a triangle to a box. The result of clipping a convex polygon by planes
-// is convex, so the caller can fan-triangulate it.
+// Clips a triangle to a box. Clipping a convex polygon by planes stays convex,
+// so the caller can fan-triangulate the result.
 void clipToBox(const V3 tri[3], const double lo[3], const double hi[3],
                QVector<V3> &poly, QVector<V3> &scratch)
 {
@@ -65,8 +70,6 @@ void clipToBox(const V3 tri[3], const double lo[3], const double hi[3],
         poly.swap(scratch);
     }
 }
-
-// ---------------------------------------------------------------- capping --
 
 struct VKey {
     float x, y, z;
@@ -143,35 +146,17 @@ void earClip(const QVector<uint32_t> &loop, const QVector<float> &pos,
     }
 }
 
-// Closes the cut faces of one clipped cell.
-//
-// The open boundary of the clipped shell only gives PART of each cut face's
-// outline - the part where the model's own surface meets the plane. Where the
-// solid runs all the way into a cell corner, the rest of the outline is the
-// cell face's own border, and no triangle exists along it. So the loop is
-// walked in two alternating modes: follow the shell's open edges while they
-// last, then run along the face border until the next open edge starts.
-//
-bool pointInside(const MeshData &m, const double p[3]);   // defined below
+bool pointInside(const MeshData &m, const double p[3]);
 
-// Returns true if the piece is a closed solid afterwards. Attempting a face
-// that had no hole is harmless - the walk simply finds nothing to do - so the
-// only meaningful verdict is whether any open edge is left at the end.
+// Closes the cut faces of one clipped cell. Returns true if the piece is a
+// closed solid afterwards.
 bool capCell(MeshData &out, const double lo[3], const double hi[3],
              bool inwardWinding, const MeshData &source)
 {
-    // Directed boundary edges: an edge with no opposite-direction twin is on
-    // the open rim. The cap traverses it the other way round, the way the
-    // missing triangle would have.
     const auto dirKey = [](uint32_t x, uint32_t y) {
         return (quint64(x) << 32) | y;
     };
 
-    // Each directed edge remembers the third vertex of the triangle it came
-    // from. That is what tells a genuine hole from a face the shell already
-    // covers: if the source triangle lies IN the cell face, the missing
-    // material is not on that face at all, and capping there would just
-    // duplicate the shell with the opposite winding.
     QHash<quint64, uint32_t> directed;
     for (int t = 0; t + 2 < out.tris.size(); t += 3) {
         const uint32_t a = out.tris[t + 0], b = out.tris[t + 1], c = out.tris[t + 2];
@@ -181,7 +166,7 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
     }
 
     struct RimEdge { uint32_t from, to, apex; };
-    QVector<RimEdge> rim;                        // already reversed for the cap
+    QVector<RimEdge> rim;
     for (auto it = directed.constBegin(); it != directed.constEnd(); ++it) {
         const uint32_t x = uint32_t(it.key() >> 32);
         const uint32_t y = uint32_t(it.key() & 0xffffffffu);
@@ -189,15 +174,13 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
             rim.append({ y, x, it.value() });
     }
     if (rim.isEmpty())
-        return true;                             // already closed
+        return true;
 
     for (int f = 0; f < 6; ++f) {
         const int    axis = f / 2;
         const bool   high = (f % 2) != 0;
         const double val  = high ? hi[axis] : lo[axis];
 
-        // 2D frame chosen so that counter-clockwise in (u, v) means the cap's
-        // normal points out of the cell.
         const int u = high ? (axis + 1) % 3 : (axis + 2) % 3;
         const int v = high ? (axis + 2) % 3 : (axis + 1) % 3;
 
@@ -207,9 +190,6 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
         if (!(du > 0.0) || !(dv > 0.0))
             continue;
 
-        // Vertex coordinates are stored as float, while the cell bounds are
-        // doubles. A padded bound like -1e-5 does not survive the round trip,
-        // so every "is it on this plane / border" test compares in float.
         const float fval = float(val);
         const auto onPlane = [&](uint32_t i) {
             return out.pos[i * 3 + axis] == fval;
@@ -219,17 +199,12 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
         for (const RimEdge &e : rim)
             if (onPlane(e.from) && onPlane(e.to) && !onPlane(e.apex))
                 forward.insert(e.from, e.to);
-        // A face with no model surface on it is either wholly outside the
-        // material or wholly inside it. Filling the "wholly inside" case by
-        // hand was tried and consistently over-filled on finer grids, so it is
-        // left alone: an honestly open piece beats invented material.
         if (forward.isEmpty())
             continue;
 
         const float fu0 = float(u0), fu1 = float(u1);
         const float fv0 = float(v0), fv1 = float(v1);
 
-        // Perimeter parameter, counter-clockwise from (u0, v0).
         const auto param = [&](double pu, double pv) -> double {
             if (float(pv) == fv0) return pu - u0;
             if (float(pu) == fu1) return du + (pv - v0);
@@ -241,7 +216,6 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
             return pu == fu0 || pu == fu1 || pv == fv0 || pv == fv1;
         };
 
-        // The four corners, as vertices, created on demand.
         QHash<VKey, quint32> vindex;
         for (int i = 0; i < out.vertexCount(); ++i)
             vindex.insert(VKey { out.pos[i * 3 + 0], out.pos[i * 3 + 1], out.pos[i * 3 + 2] },
@@ -262,20 +236,8 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
                                      vertexAt(u1, v1), vertexAt(u0, v1) };
         const double perim = 2.0 * (du + dv);
 
-        // Which way the rim runs depends on the source mesh's winding, which we
-        // cannot assume - an inward-wound STL is still a perfectly good STL. So
-        // build the loops both ways and keep the one that comes out
-        // counter-clockwise, i.e. enclosing the material rather than the rest
-        // of the cell face. Going the wrong way round picks up the far corners
-        // and caps the complement of the piece.
         struct Attempt { bool ok; double area; QVector<QVector<uint32_t>> loops; };
 
-        // The rim direction is NOT a free choice - it is fixed by the source
-        // mesh's winding, since the cap traverses each open edge the opposite
-        // way from the triangle that owns it. Only the border closure has to
-        // be matched to it: an inward-wound mesh gives clockwise cap loops, so
-        // the run along the cell face border has to go clockwise as well, and
-        // the finished loop has negative area rather than positive.
         const auto build = [&](bool borderCW) {
             Attempt res { true, 0.0, {} };
             const QHash<uint32_t, uint32_t> &nextOf = forward;
@@ -309,8 +271,6 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
                         cur = *nx;
                     }
                     else if (onBorder(cur)) {
-                        // Run along the face border, the same way round as the
-                        // rim, to the next vertex that matters.
                         const double t = param(out.pos[cur * 3 + u], out.pos[cur * 3 + v]);
                         uint32_t nextVert = uint32_t(-1);
                         double   bestGap  = perim * 2.0;
@@ -326,7 +286,7 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
                         cur = nextVert;
                     }
                     else {
-                        res.ok = false;          // dead end away from the border
+                        res.ok = false;
                         break;
                     }
 
@@ -348,10 +308,6 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
             return res;
         };
 
-        // Which way the rim runs is fixed by the source mesh's winding, which
-        // was measured once from its signed volume. Guessing per face does not
-        // work: the loop going the wrong way round encloses the leftover strip
-        // of the cell face, and that is a positively-wound region too.
         const auto areaOk = [&](const Attempt &x) {
             return x.ok && !x.loops.isEmpty() &&
                    (inwardWinding ? x.area < 0.0 : x.area > 0.0);
@@ -366,17 +322,12 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
 
         const bool faceOk = areaOk(a);
         if (faceOk) {
-            // earClip always emits counter-clockwise in its own (axis+1,
-            // axis+2) frame, which faces +axis. The low face has to look the
-            // other way - and so does everything, if the source mesh is wound
-            // inward, because the cap has to agree with the shell it closes.
             for (const QVector<uint32_t> &loop : a.loops)
                 earClip(loop, out.pos, axis, high == inwardWinding, &out.tris);
         }
 
     }
 
-    // Final verdict: is every edge now shared by two triangles?
     QSet<quint64> after;
     for (int t = 0; t + 2 < out.tris.size(); t += 3) {
         after.insert(dirKey(out.tris[t + 0], out.tris[t + 1]));
@@ -392,9 +343,8 @@ bool capCell(MeshData &out, const double lo[3], const double hi[3],
     return true;
 }
 
-// Six times the signed volume of a closed mesh. Positive means the triangles
-// are wound counter-clockwise seen from outside - the usual convention. A file
-// wound the other way is still perfectly valid, and the caps have to follow it.
+// Six times the signed volume of a closed mesh. Positive means the triangles are
+// wound counter-clockwise seen from outside.
 double signedVolume6(const MeshData &m)
 {
     double v = 0.0;
@@ -409,15 +359,8 @@ double signedVolume6(const MeshData &m)
     return v;
 }
 
-// Ray cast from p along a deliberately skew direction, counting crossings of
-// the model. An odd count means p is inside.
-//
-// This is what makes a fine division of a solid work at all: a cell buried in
-// the middle of the material contains no surface triangles, so clipping alone
-// yields nothing for it. Such a cell is not empty - it is completely full.
 bool pointInside(const MeshData &m, const double p[3])
 {
-    // Skew on purpose, so the ray is very unlikely to graze an edge or vertex.
     const double d[3] = { 0.5773502691, 0.5773502692, 0.5773502693 };
     int crossings = 0;
 
@@ -433,7 +376,7 @@ bool pointInside(const MeshData &m, const double p[3])
                                d[0] * e2[1] - d[1] * e2[0] };
         const double det = e1[0] * pv[0] + e1[1] * pv[1] + e1[2] * pv[2];
         if (det > -1e-12 && det < 1e-12)
-            continue;                            // ray parallel to the triangle
+            continue;
 
         const double inv = 1.0 / det;
         const double tv[3] = { p[0] - a[0], p[1] - a[1], p[2] - a[2] };
@@ -455,7 +398,7 @@ bool pointInside(const MeshData &m, const double p[3])
     return (crossings & 1) != 0;
 }
 
-// Emits a closed axis-aligned box, wound to match the source mesh.
+// Writes the six faces of a cell box, wound in or out as asked.
 void emitBox(MeshData &out, const double lo[3], const double hi[3], bool inwardWinding)
 {
     uint32_t v[8];
@@ -464,14 +407,13 @@ void emitBox(MeshData &out, const double lo[3], const double hi[3], bool inwardW
                              (i & 2) ? hi[1] : lo[1],
                              (i & 4) ? hi[2] : lo[2]);
 
-    // Each face as two triangles, wound counter-clockwise seen from outside.
     static const int face[6][4] = {
-        { 0, 2, 3, 1 },   // z = lo   (looking from -z)
-        { 4, 5, 7, 6 },   // z = hi
-        { 0, 1, 5, 4 },   // y = lo
-        { 2, 6, 7, 3 },   // y = hi
-        { 0, 4, 6, 2 },   // x = lo
-        { 1, 3, 7, 5 }    // x = hi
+        { 0, 2, 3, 1 },
+        { 4, 5, 7, 6 },
+        { 0, 1, 5, 4 },
+        { 2, 6, 7, 3 },
+        { 0, 4, 6, 2 },
+        { 1, 3, 7, 5 }
     };
     for (int f = 0; f < 6; ++f) {
         const int *q = face[f];
@@ -486,12 +428,8 @@ void emitBox(MeshData &out, const double lo[3], const double hi[3], bool inwardW
     }
 }
 
-// Splits triangles lying on a cell face until no edge is longer than `target`.
-//
-// This only matters for curved cuts: a cut face is created flat, and if it stays
-// one big quad then un-warping just tilts that quad instead of bending it. Both
-// triangles sharing an edge compute the same midpoint from the same two
-// endpoints, and midpoints are welded, so no T-junctions appear.
+// Splits the flat cut faces into smaller triangles, so un-warping bends them
+// smoothly instead of tilting one facet.
 void subdivideCutFaces(MeshData &m, const double lo[3], const double hi[3],
                        double target)
 {
@@ -516,8 +454,6 @@ void subdivideCutFaces(MeshData &m, const double lo[3], const double hi[3],
         return id;
     };
 
-    // A triangle is on a cut face when all three of its vertices share one
-    // coordinate that equals a cell bound.
     const auto onCutFace = [&](uint32_t a, uint32_t b, uint32_t c) {
         for (int ax = 0; ax < 3; ++ax) {
             const float f0 = float(lo[ax]), f1 = float(hi[ax]);
@@ -540,8 +476,6 @@ void subdivideCutFaces(MeshData &m, const double lo[3], const double hi[3],
         return std::sqrt(qMax(d2(a, b), qMax(d2(b, c), d2(c, a))));
     };
 
-    // Each pass quarters the offending triangles; six is far more resolution
-    // than any sane wave needs, and it bounds the growth.
     for (int pass = 0; pass < 6; ++pass) {
         QVector<uint32_t> next;
         next.reserve(m.tris.size());
@@ -568,16 +502,13 @@ void subdivideCutFaces(MeshData &m, const double lo[3], const double hi[3],
     }
 }
 
-// Evenly spaced interior cut positions for one axis.
 void evenPlanes(double lo, double hi, int n, QVector<double> *out)
 {
     for (int s = 1; s < n; ++s)
         out->append(lo + (hi - lo) * double(s) / double(n));
 }
 
-} // namespace
-
-// ------------------------------------------------------------ spec builders --
+}
 
 MeshDivisionSpec MeshDivider::uniform(const MeshData &mesh, const int counts[3])
 {
@@ -593,7 +524,7 @@ MeshDivisionSpec MeshDivider::jittered(const MeshData &mesh, const int counts[3]
                                        double jitter, quint32 seed)
 {
     MeshDivisionSpec spec = uniform(mesh, counts);
-    jitter = qBound(0.0, jitter, 0.45);          // beyond 0.45 cuts can cross
+    jitter = qBound(0.0, jitter, 0.45);
 
     QRandomGenerator rng(seed);
     for (int a = 0; a < 3; ++a) {
@@ -648,7 +579,6 @@ MeshDivisionSpec MeshDivider::toBuildVolume(const MeshData &mesh,
     return spec;
 }
 
-
 MeshDivisionSpec MeshDivider::balanced(const MeshData &mesh, const int counts[3])
 {
     MeshDivisionSpec spec;
@@ -657,9 +587,6 @@ MeshDivisionSpec MeshDivider::balanced(const MeshData &mesh, const int counts[3]
     if (nTri == 0)
         return uniform(mesh, counts);
 
-    // Triangle centroid and area along each axis, then cuts at equal-area
-    // quantiles. Where the model's material is unevenly spread, this is what
-    // stops one piece being nearly empty and its neighbour carrying everything.
     struct Item { double at; double w; };
 
     for (int a = 0; a < 3; ++a) {
@@ -705,7 +632,6 @@ MeshDivisionSpec MeshDivider::balanced(const MeshData &mesh, const int counts[3]
                 ++next;
             }
         }
-        // Any cut that landed on the boundary would make an empty slab.
         for (double &p : spec.planes[a])
             p = qBound(double(mesh.bmin[a]) + 1e-9, p, double(mesh.bmax[a]) - 1e-9);
         std::sort(spec.planes[a].begin(), spec.planes[a].end());
@@ -715,8 +641,6 @@ MeshDivisionSpec MeshDivider::balanced(const MeshData &mesh, const int counts[3]
                     .arg(spec.cells(0)).arg(spec.cells(1)).arg(spec.cells(2));
     return spec;
 }
-
-// ------------------------------------------------------------------ divide --
 
 bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
                          QVector<PuzzlePiece> *pieces, QString *report,
@@ -728,10 +652,6 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
         return false;
     }
 
-    // Ordered cell boundaries per axis, padded so nothing falls outside.
-    // No padding on the outer bounds. Clipping keeps points exactly on a plane,
-    // so the model's extremes survive - and a padded cell would leave a sliver
-    // of empty face beyond the material, which makes the cut outline ambiguous.
     QVector<double> b[3];
     for (int a = 0; a < 3; ++a) {
         b[a].append(double(mesh.bmin[a]));
@@ -749,8 +669,6 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
         return false;
     }
 
-    // Bucket each triangle into the cells its bbox overlaps, so each cell only
-    // clips the triangles that can possibly reach it.
     QVector<QVector<int>> bucket(nCells);
     const auto cellAt = [&](int i, int j, int k) { return (i * n[1] + j) * n[2] + k; };
     const auto slabOf = [&](int a, double v) {
@@ -780,7 +698,6 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
                     bucket[cellAt(i, j, k)].append(t);
     }
 
-    // Winding is a property of the file, measured once.
     const bool inwardWinding = signedVolume6(mesh) < 0.0;
 
     int openPieces = 0, empty = 0;
@@ -833,8 +750,6 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
                 }
 
                 if (out.tris.isEmpty()) {
-                    // No surface crossed this cell. Either it is outside the
-                    // model, or it is buried inside it and completely full.
                     const double mid[3] = { 0.5 * (lo[0] + hi[0]),
                                             0.5 * (lo[1] + hi[1]),
                                             0.5 * (lo[2] + hi[2]) };
@@ -852,10 +767,6 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
                     continue;
                 }
 
-                // ---- cap the cuts ------------------------------------------
-                // A cut face has to be closed with new material, or the piece
-                // is a shell rather than a solid. capCell walks the open
-                // boundary and fills each cell face it lies on.
                 if (!capCell(out, lo, hi, inwardWinding, mesh))
                     ++openPieces;
 
@@ -892,17 +803,13 @@ bool MeshDivider::divide(const MeshData &mesh, const MeshDivisionSpec &spec,
     return true;
 }
 
-
-// ------------------------------------------------------------ curved cuts --
-
+// Warps the whole mesh before it is cut with ordinary planes.
 MeshData MeshDivider::warp(const MeshData &mesh, const CutWarp &w)
 {
     MeshData out = mesh;
     if (!w.active() || mesh.pos.isEmpty())
         return out;
 
-    // Normalisation uses the ORIGINAL bounds, and unwarp() is handed the same
-    // ones, so the two maps are exact inverses.
     const double bmin[3] = { mesh.bmin[0], mesh.bmin[1], mesh.bmin[2] };
     const double bmax[3] = { mesh.bmax[0], mesh.bmax[1], mesh.bmax[2] };
     const double diag    = mesh.diagonal();
@@ -919,6 +826,8 @@ MeshData MeshDivider::warp(const MeshData &mesh, const CutWarp &w)
     return out;
 }
 
+// Brings the cut pieces back to the model's own space; only the cuts keep the
+// curve.
 void MeshDivider::unwarp(QVector<PuzzlePiece> *pieces, const CutWarp &w,
                          const float bminF[3], const float bmaxF[3],
                          double diagonal)
@@ -938,7 +847,6 @@ void MeshDivider::unwarp(QVector<PuzzlePiece> *pieces, const CutWarp &w,
             m.pos[i + 1] = float(p[1]);
             m.pos[i + 2] = float(p[2]);
         }
-        // Positions moved, so bounds, normals and the edge list are all stale.
         m.finalize();
         for (int a = 0; a < 3; ++a) {
             piece.centre[a] = 0.5f * (m.bmin[a] + m.bmax[a]);
@@ -947,6 +855,7 @@ void MeshDivider::unwarp(QVector<PuzzlePiece> *pieces, const CutWarp &w,
     }
 }
 
+// Divides by an explicit list of cells rather than a grid - the BSP path.
 bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cells,
                               QVector<PuzzlePiece> *pieces, QString *report,
                               double cutDetail)
@@ -964,7 +873,6 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
     const bool inwardWinding = signedVolume6(mesh) < 0.0;
     const int  nTri = mesh.triangleCount();
 
-    // Triangle bounds once, so each cell only clips what can reach it.
     QVector<float> tlo(nTri * 3), thi(nTri * 3);
     for (int t = 0; t < nTri; ++t)
         for (int a = 0; a < 3; ++a) {
@@ -986,8 +894,8 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
         const double *hi = cells[ci].hi;
 
         PuzzlePiece piece;
-        piece.i = ci;                    // BSP leaves have no grid position;
-        piece.j = 0; piece.k = 0;        // the index is the identity
+        piece.i = ci;
+        piece.j = 0; piece.k = 0;
         for (int a = 0; a < 3; ++a) { piece.p0[a] = lo[a]; piece.p1[a] = hi[a]; }
 
         MeshData &out = piece.mesh;
@@ -1034,8 +942,6 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
         }
 
         if (out.tris.isEmpty()) {
-            // No surface crossed this cell: it is either outside the model or
-            // buried inside it and completely full.
             const double mid[3] = { 0.5 * (lo[0] + hi[0]),
                                     0.5 * (lo[1] + hi[1]),
                                     0.5 * (lo[2] + hi[2]) };
@@ -1106,9 +1012,6 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
     QString warning;
     int taken = 0, added = 0;
 
-    // The two failure modes are opposite ends of the same distribution, so both
-    // are corrected in the same loop: crumbs get absorbed, oversized pieces get
-    // split back down. Doing only one of them just moves the imbalance.
     for (int pass = 0; pass < 12; ++pass) {
         const QVector<int> leafNode = PuzzleDivider::leavesOf(tree, cells);
 
@@ -1120,19 +1023,6 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
         if (pieces->size() < 2)
             break;
 
-        // How much MATERIAL a piece holds. Three metrics were tried and only
-        // the third works on a model like an armadillo:
-        //
-        //   longest side  - a sliver off a limb is long, so this misses it
-        //   bbox volume   - measures the REGION, not the material. A piece at
-        //                   the edge of the model can span a wide box and hold
-        //                   only a thin shell of surface inside it.
-        //   solid volume  - what is actually wanted, but only defined when the
-        //                   piece is watertight.
-        //
-        // So: use the true volume when every piece is closed, and fall back to
-        // bbox volume when they are not. One metric for the whole division
-        // either way - mixing them would make the median meaningless.
         const auto boxVolume = [](const PuzzlePiece &p) {
             return double(p.size[0]) * double(p.size[1]) * double(p.size[2]);
         };
@@ -1176,10 +1066,9 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
         std::sort(sorted.begin(), sorted.end());
         const double median = sorted[sorted.size() / 2];
 
-        const double crumbVol = 0.35 * median;   // measured: crumbs sit under
-        const double bigVol   = 2.50 * median;   // this, real pieces above it
+        const double crumbVol = 0.35 * median;
+        const double bigVol   = 2.50 * median;
 
-        // --- absorb crumbs -------------------------------------------------
         QVector<int> toCollapse;
         for (int i = 0; i < pieces->size(); ++i) {
             if (vols[i] >= crumbVol)
@@ -1191,11 +1080,6 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
             if (parent < 0)
                 continue;
 
-            // ONLY when both children are leaves. Collapsing a parent whose
-            // sibling subtree was split further throws away every one of those
-            // cuts at once, which is how a single piece ends up being half the
-            // model. Merging exactly two adjacent cells is bounded; merging a
-            // whole subtree is not.
             const int c0 = tree[parent].child[0], c1 = tree[parent].child[1];
             if (c0 < 0 || c1 < 0 || !tree[c0].isLeaf() || !tree[c1].isLeaf())
                 continue;
@@ -1203,7 +1087,6 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
                 toCollapse.append(parent);
         }
 
-        // --- split anything oversized --------------------------------------
         QVector<int> toSplit;
         for (int i = 0; i < pieces->size(); ++i) {
             if (vols[i] <= bigVol)
@@ -1214,12 +1097,8 @@ bool MeshDivider::divideBspAbsorbing(const MeshData &mesh, int targetPieces,
         }
 
         if (toCollapse.isEmpty() && toSplit.isEmpty())
-            break;                       // the spread is acceptable
+            break;
 
-        // Absorbing raises the median too, so a greedy cascade could keep
-        // eating pieces that were never crumbs. The baseline is what the FIRST
-        // clip produced, not the target - cells landing outside the model
-        // already put the count below target.
         int netAfter = pieces->size() - toCollapse.size() + toSplit.size();
         if (netAfter < (pieces->size() * 2) / 3)
             toCollapse.clear();

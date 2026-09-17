@@ -1,8 +1,14 @@
+//
+// PieceExport - implementation: the .itd, .obj and .stl writers and the
+// spread-apart layout used for slicing.
+//
+// Qt headers must come before the IRIT ones. The IRIT C headers define bare names
+// that collide with Qt's, and QDir fails to compile with "_mkdir already defined"
+// if the order is reversed.
+//
+
 #include "PieceExport.h"
 
-// Qt before IRIT, deliberately. The IRIT headers define bare names that collide
-// with Qt's - QDir fails to compile ("_mkdir already defined") when it is the
-// other way round.
 #include <QDataStream>
 #include <QFile>
 #include <QFileInfo>
@@ -13,7 +19,7 @@
 #include "IritSolid.h"
 
 extern "C" {
-#include "inc_irit/misc_lib.h"     // IritMiscMatGenUnitMat
+#include "inc_irit/misc_lib.h"
 }
 
 namespace {
@@ -29,15 +35,14 @@ Kind kindOf(const QString &path)
     return Kind::Unknown;
 }
 
-// The write runs inside IritGuard, so the context holds only POD - a longjmp
-// out of an IRIT fatal error cannot unwind C++ destructors.
 struct SaveCtx {
     IritPrsrObjectStruct *list;
     const char           *path;
-    int                   kind;        // Kind, as an int
+    int                   kind;
     int                   ok;
 };
 
+// The write, inside IritGuard; POD only.
 void doSave(void *v)
 {
     SaveCtx *c = static_cast<SaveCtx *>(v);
@@ -45,19 +50,15 @@ void doSave(void *v)
 
     switch (Kind(c -> kind)) {
     case Kind::Itd:
-        // Indent 0: the file is for machines and for round-tripping, and an
-        // indented dump of a few hundred thousand vertices is enormous.
         IritPrsrPutObjectToFile3(c -> path, c -> list, 0);
-        c -> ok = 1;                   // this one reports failure by fatal error
+        c -> ok = 1;
         break;
 
     case Kind::Obj:
-        // UniqueVertices merges the shared vertices a boolean leaves behind;
-        // without it a piece exports with duplicates on every cut face.
         c -> ok = IritPrsrOBJSaveFile(c -> list, c -> path,
-                                      FALSE,    // no warning pop-ups
-                                      TRUE,     // triangulate convex polys
-                                      TRUE);    // unique vertices
+                                      FALSE,
+                                      TRUE,
+                                      TRUE);
         break;
 
     default:
@@ -65,20 +66,9 @@ void doSave(void *v)
     }
 }
 
-
-// STL is written here rather than through IritPrsrSTLSaveFile, which has two
-// behaviours that make it unusable for this:
-//
-//   * a binary STL cannot hold more than one named solid, so it silently
-//     switches to one-file-per-object even when asked for a single file;
-//   * it derives those file names by truncating the path at the FIRST '.' it
-//     finds - strchr where strrchr was meant. Any dot earlier in the path (a
-//     directory such as ".claude", or "v1.2") sends the output somewhere else
-//     entirely. Saving to ...\tmp\export\pieces.stl wrote 1.stl..6.stl into
-//     C:\Users\Admin instead.
-//
-// The format itself is 84 bytes of header plus 50 per triangle, so writing it
-// directly costs less than working around either problem.
+// STL written directly rather than through IritPrsrSTLSaveFile, which cannot
+// hold more than one named solid in a binary file and truncates output paths at
+// the first '.' rather than the last.
 bool writeStlBinary(const QVector<const MeshData *> &meshes, const QString &path,
                     QString *error)
 {
@@ -109,8 +99,6 @@ bool writeStlBinary(const QVector<const MeshData *> &meshes, const QString &path
             const float *B = &m->pos[m->tris[t + 1] * 3];
             const float *C = &m->pos[m->tris[t + 2] * 3];
 
-            // Facet normal from the winding, normalised. A zero-area triangle
-            // gets a zero normal, which is what slicers expect to ignore.
             const double ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
             const double vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
             double nx = uy * vz - uz * vy;
@@ -135,9 +123,8 @@ bool writeStlBinary(const QVector<const MeshData *> &meshes, const QString &path
     return true;
 }
 
-
-// Writes one already-built IRIT object (a list of pieces, or a single piece) to
-// `path` in the given format, under the guard.
+// Writes one already-built IRIT object - a list of pieces, or a single piece -
+// in the given format, under the guard.
 bool writeIritList(IritPrsrObjectStruct *list, const QString &path, Kind kind,
                    QString *error)
 {
@@ -161,9 +148,6 @@ bool writeIritList(IritPrsrObjectStruct *list, const QString &path, Kind kind,
     return true;
 }
 
-// The per-piece file name for `index`, derived from the name the user chose.
-// Built with QFileInfo rather than by hand so a dot elsewhere in the path is
-// harmless - exactly what IRIT's own STL writer gets wrong.
 QString pieceFileName(const QString &path, int index, const QString &ext)
 {
     const QFileInfo fi(path);
@@ -173,11 +157,7 @@ QString pieceFileName(const QString &path, int index, const QString &ext)
                .arg(ext);
 }
 
-
-// Moves each piece into its own cell of a grid on the XY plane, sitting on
-// z = 0. Cells are sized by the largest piece and separated by a real gap, so
-// no two pieces can touch however oddly shaped they are - which is the only
-// thing a slicer will accept as "these are separate objects".
+// Moves the pieces apart so a slicer sees separate solids on the plate.
 void spreadApart(QVector<MeshData> *pieces)
 {
     const int n = pieces->size();
@@ -189,8 +169,6 @@ void spreadApart(QVector<MeshData> *pieces)
         cellW = qMax(cellW, double(m.bmax[0]) - double(m.bmin[0]));
         cellD = qMax(cellD, double(m.bmax[1]) - double(m.bmin[1]));
     }
-    // A tenth of the larger cell side: visibly apart at any scale, without
-    // spreading the plate so wide that nothing fits on a bed.
     const double gap = 0.10 * qMax(cellW, cellD);
     const int cols = qMax(1, int(std::ceil(std::sqrt(double(n)))));
 
@@ -198,12 +176,9 @@ void spreadApart(QVector<MeshData> *pieces)
         MeshData &m = (*pieces)[i];
         const int col = i % cols, row = i / cols;
 
-        // Align each piece's minimum corner to its cell origin: every piece
-        // then lies inside a cellW x cellD footprint, and consecutive cells are
-        // a full gap apart.
         const double dx = col * (cellW + gap) - double(m.bmin[0]);
         const double dy = row * (cellD + gap) - double(m.bmin[1]);
-        const double dz = -double(m.bmin[2]);          // rest it on the bed
+        const double dz = -double(m.bmin[2]);
 
         for (int v = 0; v + 2 < m.pos.size(); v += 3) {
             m.pos[v + 0] += float(dx);
@@ -215,7 +190,7 @@ void spreadApart(QVector<MeshData> *pieces)
     }
 }
 
-} // namespace
+}
 
 QStringList PieceExport::nameFilters()
 {
@@ -251,9 +226,6 @@ bool PieceExport::save(const QVector<PuzzlePiece> &pieces, const QString &path,
         return false;
     }
 
-    // Orient every piece up front. Consumers of all three formats - slicers
-    // included - read outward normals as "solid", so an inside-out piece would
-    // print as its own negative.
     QVector<MeshData> oriented;
     oriented.reserve(pieces.size());
     for (int i = 0; i < pieces.size(); ++i) {
@@ -271,8 +243,6 @@ bool PieceExport::save(const QVector<PuzzlePiece> &pieces, const QString &path,
         return false;
     }
 
-    // Spread before anything is written, so every format and both file layouts
-    // see the same geometry.
     if (spread) {
         spreadApart(&oriented);
         r.spread = true;
@@ -280,12 +250,6 @@ bool PieceExport::save(const QVector<PuzzlePiece> &pieces, const QString &path,
 
     const QString ext = QFileInfo(path).suffix().toLower();
 
-    // ---- one file per piece ---------------------------------------------
-    //
-    // Worth having for every format, not only STL. The pieces are written in
-    // MODEL coordinates - reassembled they occupy exactly the original model's
-    // space - so a single file looks like the undivided model in any viewer
-    // that merges groups on import. Separate files cannot be misread that way.
     if (separateFiles) {
         for (int i = 0; i < oriented.size(); ++i) {
             const QString one = pieceFileName(path, i, ext);
@@ -322,7 +286,6 @@ bool PieceExport::save(const QVector<PuzzlePiece> &pieces, const QString &path,
         return true;
     }
 
-    // ---- everything in one file -----------------------------------------
     if (kind == Kind::Stl) {
         QVector<const MeshData *> all;
         for (const MeshData &m : oriented)
@@ -334,8 +297,6 @@ bool PieceExport::save(const QVector<PuzzlePiece> &pieces, const QString &path,
         return true;
     }
 
-    // One IRIT object per piece, gathered into a list, so the pieces stay
-    // distinguishable inside the file - an OBJ group, an ITD object.
     IritPrsrObjectStruct *list = IritPrsrGenLISTObject(NULL);
     int at = 0;
     for (int i = 0; i < oriented.size(); ++i) {

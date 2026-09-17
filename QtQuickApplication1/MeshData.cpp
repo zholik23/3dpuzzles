@@ -1,3 +1,7 @@
+//
+// MeshData - implementation: bounds, normals, edges, and the derived measures.
+//
+
 #include "MeshData.h"
 #include <QHash>
 #include <cmath>
@@ -44,8 +48,6 @@ void MeshData::computeNormals()
 void MeshData::buildEdges()
 {
     edges.clear();
-    // Dedupe by packing the (lo,hi) index pair into one 64-bit key. Meshes
-    // past 4G vertices are not a case we need to handle.
     QHash<quint64, char> seen;
     seen.reserve(tris.size());
 
@@ -64,9 +66,6 @@ void MeshData::buildEdges()
         add(tris[t + 1], tris[t + 2]);
         add(tris[t + 2], tris[t + 0]);
     }
-    // Polyline segments are appended verbatim: a curve's segments are real
-    // geometry, not shared triangle boundaries, so they must not be deduped
-    // away against them.
     edges += polylineEdges;
 }
 

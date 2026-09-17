@@ -1,3 +1,8 @@
+//
+// MaterialField - implementation: the voxel fill, its 3D prefix sum, and the O(1)
+// box queries and connectivity tests the splitter asks for.
+//
+
 #include "MaterialField.h"
 
 #include <QHash>
@@ -6,6 +11,8 @@
 #include <cmath>
 #include <cstdio>
 
+// Fills the voxel grid by column parity - one pass over the triangles - then
+// builds the 3D prefix sum the queries below read.
 MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
 {
     MaterialField f;
@@ -32,10 +39,6 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
 
     const int nx = f.m_n[0], ny = f.m_n[1], nz = f.m_n[2];
 
-    // Inside/outside by column parity: for every (x,y) column, collect where the
-    // surface crosses it in z, sort, and fill the spans between pairs. One pass
-    // over the triangles - far cheaper than a ray cast per voxel, of which there
-    // would be close to a million.
     QVector<QVector<float>> crossings(nx * ny);
 
     for (int t = 0; t + 2 < mesh.tris.size(); t += 3) {
@@ -43,8 +46,6 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
         const float *B = &mesh.pos[mesh.tris[t + 1] * 3];
         const float *C = &mesh.pos[mesh.tris[t + 2] * 3];
 
-        // Signed area of the XY projection. Near zero means the triangle is
-        // seen edge-on and crosses no column interior.
         const double ax = A[0] - org[0], ay = A[1] - org[1];
         const double bx = B[0] - org[0], by = B[1] - org[1];
         const double cx = C[0] - org[0], cy = C[1] - org[1];
@@ -55,27 +56,17 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
         const double loX = qMin(ax, qMin(bx, cx)), hiX = qMax(ax, qMax(bx, cx));
         const double loY = qMin(ay, qMin(by, cy)), hiY = qMax(ay, qMax(by, cy));
 
-        // Columns whose CENTRE can fall inside the triangle.
         const int i0 = qMax(0,      int(std::floor(loX / f.m_cell[0] - 0.5)));
         const int i1 = qMin(nx - 1, int(std::ceil (hiX / f.m_cell[0] - 0.5)));
         const int j0 = qMax(0,      int(std::floor(loY / f.m_cell[1] - 0.5)));
         const int j1 = qMin(ny - 1, int(std::ceil (hiY / f.m_cell[1] - 0.5)));
 
-        // The sample point is nudged off the exact voxel centre by an
-        // irrational fraction of a cell. A centre that lands precisely on an
-        // edge shared by two triangles is counted twice or not at all, and on a
-        // mesh whose edges line up - a UV sphere's meridians, any lathed or
-        // extruded model - that misfires along a whole seam at once, leaving an
-        // empty curtain of columns that splits the model in two. The offset is
-        // far below a voxel, so it changes no volume, but it cannot coincide
-        // with a mesh edge.
         const double jx = 0.5 + 1.0 / 512.0, jy = 0.5 + 1.0 / 337.0;
         for (int i = i0; i <= i1; ++i) {
             const double px = (i + jx) * f.m_cell[0];
             for (int j = j0; j <= j1; ++j) {
                 const double py = (j + jy) * f.m_cell[1];
 
-                // Barycentric coordinates of the column centre.
                 const double w0 = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / det;
                 const double w1 = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / det;
                 const double w2 = 1.0 - w0 - w1;
@@ -98,9 +89,6 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
                 continue;
             std::sort(zs.begin(), zs.end());
 
-            // An odd count means the surface is not watertight along this
-            // column. Dropping the unpaired crossing keeps the fill sane rather
-            // than flooding the rest of the column.
             const int pairs = zs.size() & ~1;
             for (int p = 0; p + 1 < pairs; p += 2) {
                 const int k0 = qMax(0,      int(std::ceil (zs[p]     / f.m_cell[2] - 0.5)));
@@ -110,10 +98,8 @@ MaterialField MaterialField::build(const MeshData &mesh, int maxRes)
             }
         }
 
-    f.m_occ = occ;                    // kept for connectivity queries
+    f.m_occ = occ;
 
-    // Inclusive 3D prefix sum, offset by one so index 0 is an empty margin and
-    // a query never has to special-case the low edge.
     const double vox = f.m_cell[0] * f.m_cell[1] * f.m_cell[2];
     f.m_sum.assign(qsizetype(nx + 1) * (ny + 1) * (nz + 1), 0.0);
     for (int i = 1; i <= nx; ++i)
@@ -140,11 +126,11 @@ double MaterialField::total() const
     return m_sum[sumIndex(m_n[0], m_n[1], m_n[2])];
 }
 
+// Voxel index range for a box, half-open: voxels whose centre lies inside.
 bool MaterialField::range(const double lo[3], const double hi[3],
                           int a[3], int b[3]) const
 {
     for (int d = 0; d < 3; ++d) {
-        // Half-open [a, b): voxels whose centre lies in the box.
         a[d] = qBound(0, int(std::ceil (lo[d] / m_cell[d] - 0.5)),     m_n[d]);
         b[d] = qBound(0, int(std::floor(hi[d] / m_cell[d] - 0.5)) + 1, m_n[d]);
         if (b[d] <= a[d])
@@ -153,6 +139,7 @@ bool MaterialField::range(const double lo[3], const double hi[3],
     return true;
 }
 
+// Counts the separate lumps of material inside a box.
 int MaterialField::lumpStats(const double lo[3], const double hi[3],
                              int *biggest, int *total) const
 {
@@ -206,8 +193,6 @@ int MaterialField::lumpStats(const double lo[3], const double hi[3],
             std::printf("          lump %d: %d voxels  i[%d..%d] j[%d..%d] k[%d..%d]\n",
                         lumps, size, lo_i, hi_i, lo_j, hi_j, lo_k, hi_k);
     }
-    // the outer loop counted every occupied voxel once, but only the unseen
-    // ones started a lump - recount the total properly
     *total = 0;
     for (int i = a[0]; i < b[0]; ++i)
     for (int j = a[1]; j < b[1]; ++j)
@@ -216,6 +201,8 @@ int MaterialField::lumpStats(const double lo[3], const double hi[3],
     return lumps;
 }
 
+// Whether the material in a box is a single lump: seed at the first occupied
+// voxel and flood through 6-neighbours, confined to the box.
 bool MaterialField::isConnected(const double lo[3], const double hi[3]) const
 {
     if (!isValid())
@@ -223,12 +210,10 @@ bool MaterialField::isConnected(const double lo[3], const double hi[3]) const
 
     int a[3], b[3];
     if (!range(lo, hi, a, b))
-        return true;                    // nothing here, nothing to sever
+        return true;
 
     const int nx = b[0] - a[0], ny = b[1] - a[1], nz = b[2] - a[2];
 
-    // Seed at the first occupied voxel, then flood through 6-neighbours,
-    // confined to the box.
     int total = 0, seed = -1;
     for (int i = a[0]; i < b[0]; ++i)
         for (int j = a[1]; j < b[1]; ++j)
@@ -272,6 +257,8 @@ bool MaterialField::isConnected(const double lo[3], const double hi[3]) const
     return reached == total;
 }
 
+// Material volume in a box: inclusion-exclusion over the eight corners of the
+// prefix sum, so O(1) however large the box.
 double MaterialField::volumeIn(const double lo[3], const double hi[3]) const
 {
     if (!isValid())
@@ -281,7 +268,6 @@ double MaterialField::volumeIn(const double lo[3], const double hi[3]) const
     if (!range(lo, hi, a, b))
         return 0.0;
 
-    // Inclusion-exclusion over the eight corners of the prefix sum.
     return m_sum[sumIndex(b[0], b[1], b[2])]
          - m_sum[sumIndex(a[0], b[1], b[2])]
          - m_sum[sumIndex(b[0], a[1], b[2])]

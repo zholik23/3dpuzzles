@@ -3,8 +3,7 @@
 // IritMesh - turns IRIT geometry into a MeshData.
 //
 // Internal header: it pulls in the IRIT C headers, so only .cpp files that
-// actually talk to IRIT should include it. CadLoader uses it for whole files;
-// PuzzleDivider uses it for one extracted sub-trivariate at a time.
+// actually talk to IRIT should include it.
 //
 #include "MeshData.h"
 
@@ -23,23 +22,11 @@ extern "C" {
 
 namespace IritMesh {
 
-// Tessellates freeform geometry, triangulates polygons, and harvests the lot
-// into `out`. CONSUMES `objs` - it is freed here, valid or not, and the caller
-// must not touch it afterwards.
-//
-// `fineNess` is IRIT's polygonal approximation control (20 is its default; a
-// higher number means more polygons).
-//
-// Returns false with `error` set if IRIT raised a fatal error along the way.
-// Succeeding with an empty mesh is possible and is NOT an error - check
-// out->isEmpty() when that matters.
 bool tessellate(IritPrsrObjectStruct *objs,
                 MeshData            *out,
                 double               fineNess,
                 QString             *error);
 
-// Names the object types in a chain, for diagnostics. Read-only; call it
-// BEFORE tessellate(), which consumes the objects.
 QStringList inventory(const IritPrsrObjectStruct *objs);
 
-} // namespace IritMesh
+}

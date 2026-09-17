@@ -1,9 +1,16 @@
+//
+// AppController - implementation: loading, the four division paths, joints,
+// planner figures and the written report, plus the status text the UI shows.
+//
+
 #include "AppController.h"
 
 #include "MaterialField.h"
 #include "CadLoader.h"
 #include "PlannerGraph.h"
 #include "PlannerFigure.h"
+#include "AssemblyOrder.h"
+#include "DivisionReport.h"
 #include <QDebug>
 #include <QRandomGenerator>
 #include <algorithm>
@@ -28,8 +35,6 @@ QStringList AppController::primitiveKinds() const
     return Trivariate::primitiveKinds();
 }
 
-// ------------------------------------------------------------------ loading --
-
 void AppController::loadFile(const QUrl &url)
 {
     loadPath(url.isLocalFile() ? url.toLocalFile() : url.toString());
@@ -50,15 +55,13 @@ void AppController::loadPath(const QString &path)
 
     MeshData mesh;
     QString  error;
-    // Synchronous on the GUI thread: a large STL will visibly stall the window.
-    // Left that way deliberately for now - moving it to a worker is a change
-    // worth making on its own.
     if (!CadLoader::load(path, &mesh, &error)) {
         m_mesh = MeshData();
         m_sourceMesh = MeshData();
         m_pieces.clear();
         m_planFigures.clear();
         m_planFolderUrl.clear();
+        m_reportUrl.clear();
         m_triv = Trivariate();
         emit meshChanged();
         emit piecesChanged();
@@ -69,10 +72,11 @@ void AppController::loadPath(const QString &path)
 
     const qint64 ms = timer.elapsed();
     m_mesh       = mesh;
-    m_sourceMesh = mesh;        // survives adopting a cage over the top
+    m_sourceMesh = mesh;
     m_pieces.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
+    m_reportUrl.clear();
     m_triv = Trivariate();
     m_trivInfo.clear();
     m_divisionInfo.clear();
@@ -87,8 +91,6 @@ void AppController::loadPath(const QString &path)
         d += QStringLiteral(" · %1 objects").arg(m_mesh.objectCount);
     d += QStringLiteral(" · %1 ms").arg(ms);
 
-    // Extent is worth showing: it is the number that decides whether a piece
-    // fits the build volume once the division runs.
     d += QStringLiteral("\nExtent  %1 × %2 × %3")
              .arg(m_mesh.bmax[0] - m_mesh.bmin[0], 0, 'g', 4)
              .arg(m_mesh.bmax[1] - m_mesh.bmin[1], 0, 'g', 4)
@@ -104,8 +106,6 @@ void AppController::loadPath(const QString &path)
     emit statusChanged();
 }
 
-// ----------------------------------------------------- choosing a trivariate --
-
 void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
 {
     if (!tv.isValid())
@@ -115,6 +115,7 @@ void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
     m_pieces.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
+    m_reportUrl.clear();
 
     double dom[6];
     int    ord[3];
@@ -130,7 +131,6 @@ void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
                      .arg(ord[0]).arg(ord[1]).arg(ord[2]);
     m_divisionInfo.clear();
 
-    // Show the whole trivariate until a division is asked for.
     MeshData whole;
     QString  err;
     if (m_triv.tessellate(&whole, kModelFineNess, &err) && !whole.isEmpty()) {
@@ -195,14 +195,12 @@ void AppController::showWholeModel()
     m_pieces.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
+    m_reportUrl.clear();
     m_divisionInfo.clear();
     emit piecesChanged();
-    // meshChanged makes the view drop back to the single-part model.
     emit meshChanged();
     emit statusChanged();
 }
-
-// ----------------------------------------------------------------- dividing --
 
 void AppController::savePieces(const QUrl &url, bool separateFiles,
                                bool spread)
@@ -218,9 +216,6 @@ void AppController::savePieces(const QUrl &url, bool separateFiles,
         return;
     }
 
-    // A dialog that filters by type still lets a name through without one, and
-    // the writer picks the format from the extension - so default rather than
-    // refuse.
     if (!PieceExport::canWrite(path))
         path += QStringLiteral(".itd");
 
@@ -253,6 +248,8 @@ void AppController::savePieces(const QUrl &url, bool separateFiles,
     emit statusChanged();
 }
 
+// The V-rep path: divides the bounding cage, then trims every piece back to the
+// model (Elber section 5).
 void AppController::runDivision(const DivisionSpec &spec)
 {
     QElapsedTimer timer;
@@ -260,25 +257,25 @@ void AppController::runDivision(const DivisionSpec &spec)
 
     QVector<PuzzlePiece> pieces;
     QString warning;
+    m_stats.subject = QStringLiteral("V-rep (bounding cage)");
+    m_stats.cells   = spec.cellCount();
+    QElapsedTimer stageTimer;
+    stageTimer.start();
     if (!PuzzleDivider::divide(m_triv, spec, kPieceFineNess, &pieces, &warning)) {
         setError(warning);
         return;
     }
 
+    m_stats.msExtract = stageTimer.elapsed();
     m_pieces = std::move(pieces);
 
-    // Elber Section 5, Fig. 14c -> 14d -> 14e. The division above gives boxy
-    // sub-trivariates of the CAGE; stage B intersecting each with the original model is
-    // what trims them back to the real surface while leaving the interior cut
-    // faces alone. Without it the pieces keep the cage's shape, which is why a
-    // cage-divided model comes out cuboid.
     if (!m_sourceMesh.isEmpty()) {
+        stageTimer.restart();
         const CageBoolean::Result br =
             CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+        m_stats.msTrim = stageTimer.elapsed();
         for (const QString &line : CageBoolean::describe(br))
             qDebug().noquote() << line;
-        // Dropped cells are not failures: a box cage covers more than the
-        // model, so some cells legitimately hold no material.
         m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
                                        "cell(s) dropped, %3 failed")
                             .arg(br.intersected).arg(br.dropped).arg(br.failed);
@@ -293,8 +290,9 @@ void AppController::runDivision(const DivisionSpec &spec)
     logPieceSizes();
 
     applyJoints();
+    m_stats.msTotal = timer.elapsed();
     describePieces(QStringLiteral("V-rep · ") + spec.note, spec.cellCount(), warning);
-    m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+    m_divisionInfo += QStringLiteral(" · %1 ms").arg(m_stats.msTotal);
 
     if (!m_figureNote.isEmpty())
         m_divisionInfo += QStringLiteral("\n") + m_figureNote;
@@ -312,6 +310,8 @@ MeshData AppController::workingMesh() const
     return m_warp.active() ? MeshDivider::warp(m_mesh, m_warp) : m_mesh;
 }
 
+// The mesh path: clips the model itself against world-space cells, through the
+// warp when curved cuts are asked for.
 void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData &work)
 {
     if (m_mesh.isEmpty()) {
@@ -322,30 +322,28 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
     QElapsedTimer timer;
     timer.start();
 
-    // Cut faces are created flat. If they are about to be un-warped they need
-    // enough triangles to bend smoothly, otherwise un-warping just tilts one
-    // big facet. Straight cuts skip subdivision entirely and cost nothing.
     const double detail = m_warp.active()
         ? double(m_mesh.diagonal()) / 32.0
         : 0.0;
 
     QVector<PuzzlePiece> pieces;
     QString warning;
+    m_stats.subject = QStringLiteral("mesh (clipped)");
+    m_stats.cells   = spec.cellCount();
+    QElapsedTimer stageTimer;
+    stageTimer.start();
     if (!MeshDivider::divide(work, spec, &pieces, &warning, detail)) {
         setError(warning);
         return;
     }
 
-    // Back to the model's own space. The original surface lands exactly where
-    // it started; only the cuts keep the curve.
     MeshDivider::unwarp(&pieces, m_warp, m_mesh.bmin, m_mesh.bmax,
                         double(m_mesh.diagonal()));
 
+    m_stats.msExtract = stageTimer.elapsed();
     m_pieces = std::move(pieces);
     planAndDrawFigures();
 
-    // The mesh path cuts in world space, so the "domain" is the working mesh's
-    // bounding box and the cuts are millimetres, not parameters.
     const double dom[6] = { work.bmin[0], work.bmax[0],
                             work.bmin[1], work.bmax[1],
                             work.bmin[2], work.bmax[2] };
@@ -354,10 +352,11 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
     logPieceSizes();
 
     applyJoints();
+    m_stats.msTotal = timer.elapsed();
     describePieces(QStringLiteral("mesh · ") + spec.note +
                    QStringLiteral(" · ") + m_warp.describe(),
                    spec.cellCount(), warning);
-    m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+    m_divisionInfo += QStringLiteral(" · %1 ms").arg(m_stats.msTotal);
 
     if (!m_figureNote.isEmpty())
         m_divisionInfo += QStringLiteral("\n") + m_figureNote;
@@ -370,6 +369,8 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
     emit statusChanged();
 }
 
+// The V-rep path for an explicit cell list - what the BSP produces - followed by
+// the same section 5 trim.
 void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
                                         const QString &note)
 {
@@ -378,19 +379,24 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
 
     QVector<PuzzlePiece> pieces;
     QString warning;
+    m_stats.subject = QStringLiteral("V-rep (bounding cage)");
+    m_stats.cells   = cells.size();
+    QElapsedTimer stageTimer;
+    stageTimer.start();
     if (!PuzzleDivider::divideCells(m_triv, cells, kPieceFineNess,
                                     &pieces, &warning)) {
         setError(warning);
         return;
     }
 
+    m_stats.msExtract = stageTimer.elapsed();
     m_pieces = std::move(pieces);
 
-    // Elber Section 5: the cells above are sub-trivariates of the CAGE, so each
-    // still has the cage's outer shape until it is intersected with the model.
     if (!m_sourceMesh.isEmpty()) {
+        stageTimer.restart();
         const CageBoolean::Result br =
             CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+        m_stats.msTrim = stageTimer.elapsed();
         for (const QString &line : CageBoolean::describe(br))
             qDebug().noquote() << line;
         m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
@@ -404,8 +410,9 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
     logPieceSizes();
 
     applyJoints();
+    m_stats.msTotal = timer.elapsed();
     describePieces(QStringLiteral("V-rep · ") + note, cells.size(), warning);
-    m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+    m_divisionInfo += QStringLiteral(" · %1 ms").arg(m_stats.msTotal);
 
     if (!m_figureNote.isEmpty())
         m_divisionInfo += QStringLiteral("\n") + m_figureNote;
@@ -418,6 +425,7 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
     emit statusChanged();
 }
 
+// The mesh path for an explicit cell list, again from the BSP.
 void AppController::runCellDivision(const QVector<CellBox> &cells,
                                     const MeshData &work, const QString &note)
 {
@@ -433,6 +441,10 @@ void AppController::runCellDivision(const QVector<CellBox> &cells,
 
     QVector<PuzzlePiece> pieces;
     QString warning;
+    m_stats.subject = QStringLiteral("mesh (clipped)");
+    m_stats.cells   = cells.size();
+    QElapsedTimer stageTimer;
+    stageTimer.start();
     if (!MeshDivider::divideCells(work, cells, &pieces, &warning, detail)) {
         setError(warning);
         return;
@@ -441,14 +453,16 @@ void AppController::runCellDivision(const QVector<CellBox> &cells,
     MeshDivider::unwarp(&pieces, m_warp, m_mesh.bmin, m_mesh.bmax,
                         double(m_mesh.diagonal()));
 
+    m_stats.msExtract = stageTimer.elapsed();
     m_pieces = std::move(pieces);
     planAndDrawFigures();
     logCells(note, cells);
     logPieceSizes();
 
     applyJoints();
+    m_stats.msTotal = timer.elapsed();
     describePieces(note, cells.size(), warning);
-    m_divisionInfo += QStringLiteral(" · %1 ms").arg(timer.elapsed());
+    m_divisionInfo += QStringLiteral(" · %1 ms").arg(m_stats.msTotal);
 
     if (!m_figureNote.isEmpty())
         m_divisionInfo += QStringLiteral("\n") + m_figureNote;
@@ -461,9 +475,13 @@ void AppController::runCellDivision(const QVector<CellBox> &cells,
     emit statusChanged();
 }
 
+// Builds the on-screen summary and writes the report.
 void AppController::describePieces(const QString &note, int gridCells,
                                    const QString &warning)
 {
+    m_stats.warning = warning;
+    writeDivisionReport();
+
     float biggest = 0.0f, smallest = 1e30f;
     float maxSide[3] = { 0, 0, 0 };
     for (const PuzzlePiece &p : m_pieces) {
@@ -475,13 +493,6 @@ void AppController::describePieces(const QString &note, int gridCells,
     if (m_pieces.isEmpty())
         smallest = 0.0f;
 
-    // The adjacency graph is what the joint planner will run its spanning tree
-    // over, so its size is worth reporting even before joints exist.
-    // adjacencyOfBoxes, not adjacency(): the latter finds neighbours by stepping
-    // grid coordinates (i+1, j, k), and BSP cells have none - divideCells stores
-    // a LINEAR index in i with j = k = 0. It therefore returned a chain of
-    // exactly n-1 edges, which is what made the UI report "9 of 10 cells filled
-    // - 8 shared faces". The planner already uses the geometric pairing.
     const int shared = PuzzleDivider::adjacencyOfBoxes(m_pieces, 1e-6).size();
 
     m_divisionInfo = QStringLiteral("%1 · %2 of %3 cells filled · %4 shared faces\n"
@@ -504,6 +515,10 @@ void AppController::describePieces(const QString &note, int gridCells,
 
 void AppController::divideUniform(int nu, int nv, int nw)
 {
+    m_stats = DivisionStats();
+    m_stats.mode = QStringLiteral("Uniform");
+    m_stats.seed = m_layoutSeed;
+
     const int counts[3] = { qBound(1, nu, 64), qBound(1, nv, 64), qBound(1, nw, 64) };
 
     m_warp.enabled = false;
@@ -517,6 +532,10 @@ void AppController::divideUniform(int nu, int nv, int nw)
 
 void AppController::divideBySize(double maxSizeMM, int maxPerAxis)
 {
+    m_stats = DivisionStats();
+    m_stats.mode = QStringLiteral("Max piece size");
+    m_stats.seed = m_layoutSeed;
+
     if (!(maxSizeMM > 0.0)) {
         setError(QStringLiteral("Max piece size has to be greater than zero."));
         return;
@@ -524,19 +543,12 @@ void AppController::divideBySize(double maxSizeMM, int maxPerAxis)
     const double budget[3] = { maxSizeMM, maxSizeMM, maxSizeMM };
     const int    cap       = qBound(1, maxPerAxis, 64);
 
-    // Straight cuts: bending them would move the pieces off the sizes that were
-    // just measured, and the point of this mode is that the sizes are right.
     m_warp.enabled = false;
 
     if (m_triv.isValid()) {
-        // Walks the trivariate's own arc length, then measures each cell's real
-        // world bbox and tightens until the pieces genuinely fit.
         runDivision(PuzzleDivider::toBuildVolume(m_triv, budget, cap));
         return;
     }
-    // On a mesh this caps the piece size but comes out evenly spaced - in world
-    // space equal slabs already satisfy a size limit. The unequal-cut mode for
-    // a mesh is Random; this one earns its name only on a trivariate.
     const MeshData work = workingMesh();
     runMeshDivision(MeshDivider::toBuildVolume(work, budget, cap), work);
 }
@@ -552,23 +564,17 @@ void AppController::divideRandom(int pieces)
 {
     const int target = qBound(1, pieces, 2048);
 
-    // Straight planar cuts. The warp is left off: it deforms the outer shape of
-    // a coarse mesh, and the randomness that matters is in WHERE the cuts fall.
+    m_stats = DivisionStats();
+    m_stats.mode      = QStringLiteral("Random");
+    m_stats.requested = target;
+    m_stats.seed      = m_layoutSeed;
+
     m_warp.enabled = false;
 
     if (m_triv.isValid()) {
-        // Recursive split, not a grid. Rounding the target up to a cube
-        // (ceil(cbrt(n))^3) is what used to turn a request for 2 pieces into 8,
-        // and it also forced every interior piece to have exactly six
-        // neighbours - the regular arrangement the BSP exists to avoid.
         double dom[6];
         m_triv.domain(dom);
 
-        // Split in WORLD proportions, then map the cells back to parameter
-        // space. The cage maps its unit domain onto a bounding box that is
-        // rarely cubic, so "cut the longest axis" and the minimum-size floor
-        // are only meaningful once the domain is scaled to real extents -
-        // otherwise a parameter-cubic cell comes out as a long world slab.
         const MeshData &ref = m_sourceMesh.isEmpty() ? m_mesh : m_sourceMesh;
         double ext[3];
         for (int a = 0; a < 3; ++a)
@@ -576,18 +582,29 @@ void AppController::divideRandom(int pieces)
 
         const double wdom[6] = { 0.0, ext[0], 0.0, ext[1], 0.0, ext[2] };
 
-        // Voxelise the model so the split can follow the material instead of
-        // the cage. Local coordinates: the field's origin is the model's
-        // minimum corner, which is exactly what wdom above is measured from.
+        QElapsedTimer stageTimer;
+        stageTimer.start();
         const MaterialField field = MaterialField::build(ref);
+        m_stats.msVoxelise = stageTimer.elapsed();
+        m_stats.hasField = field.isValid();
+        if (field.isValid()) {
+            for (int a = 0; a < 3; ++a)
+                m_stats.voxels[a] = field.dim(a);
+            m_stats.voxelsFilled   = field.filledCount();
+            m_stats.voxelSide      = field.side(0);
+            m_stats.materialVolume = field.total();
+        }
+
         if (!field.isValid())
             qDebug().noquote()
                 << "DIVIDE  could not voxelise the model - falling back to "
                    "splitting the cage by volume, so empty cells are possible";
 
+        stageTimer.restart();
         const QVector<CellBox> world =
             PuzzleDivider::buildBspCells(wdom, target, 0.35, m_layoutSeed, 0.0,
                                          field.isValid() ? &field : nullptr);
+        m_stats.msSplit = stageTimer.elapsed();
 
         QVector<CellBox> cells;
         cells.reserve(world.size());
@@ -615,13 +632,6 @@ void AppController::divideRandom(int pieces)
                             work.bmin[1], work.bmax[1],
                             work.bmin[2], work.bmax[2] };
 
-    // minSide 0 = automatic: the splitter derives a floor from the model size
-    // and the target count. That bounds the CELL, which is not the same thing
-    // as bounding the PIECE - on an organic model a full-size cell can still
-    // clip down to a crumb at a claw tip or the end of a tail. So the cells are
-    // clipped, the result measured, and any crumb absorbed by collapsing its
-    // parent in the tree: a cell and its sibling merge back into the parent box
-    // exactly, so the division stays a partition of boxes throughout.
     QVector<CellBox>     cells;
     QVector<PuzzlePiece> pieces_;
     QString              warning;
@@ -651,9 +661,6 @@ void AppController::divideRandom(int pieces)
     runCellDivision(cells, work, note);
 }
 
-
-// ------------------------------------------------------------------ logging --
-
 void AppController::logDivision(const QString &what, const double domain[6],
                                 const QVector<double> cuts[3]) const
 {
@@ -678,8 +685,6 @@ void AppController::logDivision(const QString &what, const double domain[6],
         minGap = qMin(minGap, tail);
         maxGap = qMax(maxGap, tail);
 
-        // A ratio of 1.00 means the cuts are evenly spaced; anything above that
-        // is the division actually being non-uniform.
         const double ratio = (minGap > 1e-12) ? maxGap / minGap : 0.0;
 
         qDebug().noquote()
@@ -700,9 +705,6 @@ void AppController::logDivision(const QString &what, const double domain[6],
     }
 }
 
-// A recursive split has no per-axis cut lists to print, so what matters is the
-// spread of the cells themselves and how many neighbours each piece ends up
-// with - the two things a global-plane grid cannot vary.
 void AppController::logCells(const QString &what, const QVector<CellBox> &cells) const
 {
     qDebug().noquote() << QStringLiteral("---- %1 ----").arg(what);
@@ -717,8 +719,47 @@ void AppController::logCells(const QString &what, const QVector<CellBox> &cells)
                .arg(vmin, 0, 'g', 4).arg(vmax, 0, 'g', 4)
                .arg(vmin > 1e-12 ? vmax / vmin : 0.0, 0, 'f', 2);
 
-    // Neighbour counts. On a plane grid every interior piece has exactly six;
-    // anything else here is the proof the split is genuinely irregular.
+    // The cells are in the trivariate's PARAMETER space while the model is in
+    // world space, so both frames are printed together: a cell list that does
+    // not span the domain, or a domain that does not map onto the model, is
+    // invisible from volumes alone.
+    double dom[6];
+    m_triv.domain(dom);
+    qDebug().noquote()
+        << QStringLiteral("  domain: u[%1, %2] v[%3, %4] w[%5, %6]")
+               .arg(dom[0], 0, 'f', 4).arg(dom[1], 0, 'f', 4)
+               .arg(dom[2], 0, 'f', 4).arg(dom[3], 0, 'f', 4)
+               .arg(dom[4], 0, 'f', 4).arg(dom[5], 0, 'f', 4);
+
+    const MeshData &ref = m_sourceMesh.isEmpty() ? m_mesh : m_sourceMesh;
+    qDebug().noquote()
+        << QStringLiteral("  model:  x[%1, %2] y[%3, %4] z[%5, %6]")
+               .arg(double(ref.bmin[0]), 0, 'f', 4).arg(double(ref.bmax[0]), 0, 'f', 4)
+               .arg(double(ref.bmin[1]), 0, 'f', 4).arg(double(ref.bmax[1]), 0, 'f', 4)
+               .arg(double(ref.bmin[2]), 0, 'f', 4).arg(double(ref.bmax[2]), 0, 'f', 4);
+
+    for (int c = 0; c < cells.size(); ++c) {
+        qDebug().noquote()
+            << QStringLiteral("    cell %1: u[%2, %3] v[%4, %5] w[%6, %7]")
+                   .arg(c, 3)
+                   .arg(cells[c].lo[0], 0, 'f', 4).arg(cells[c].hi[0], 0, 'f', 4)
+                   .arg(cells[c].lo[1], 0, 'f', 4).arg(cells[c].hi[1], 0, 'f', 4)
+                   .arg(cells[c].lo[2], 0, 'f', 4).arg(cells[c].hi[2], 0, 'f', 4);
+    }
+
+    CellBox hull = cells.isEmpty() ? CellBox() : cells[0];
+    for (const CellBox &c : cells)
+        for (int a = 0; a < 3; ++a) {
+            hull.lo[a] = qMin(hull.lo[a], c.lo[a]);
+            hull.hi[a] = qMax(hull.hi[a], c.hi[a]);
+        }
+    qDebug().noquote()
+        << QStringLiteral("  cells cover: u[%1, %2] v[%3, %4] w[%5, %6]"
+                          "  (must equal the domain above)")
+               .arg(hull.lo[0], 0, 'f', 4).arg(hull.hi[0], 0, 'f', 4)
+               .arg(hull.lo[1], 0, 'f', 4).arg(hull.hi[1], 0, 'f', 4)
+               .arg(hull.lo[2], 0, 'f', 4).arg(hull.hi[2], 0, 'f', 4);
+
     double diag = 0.0;
     for (int a = 0; a < 3; ++a) {
         const double e = m_mesh.bmax[a] - m_mesh.bmin[a];
@@ -757,7 +798,6 @@ void AppController::logPieceSizes() const
                    .arg(p.size[2], 8, 'f', 3)
                    .arg(p.largestSide(), 8, 'f', 3);
     }
-    // If the size-based division did its job these two are close together.
     qDebug().noquote()
         << QStringLiteral("  longest side across pieces: min %1  max %2  spread %3x")
                .arg(smallest, 0, 'f', 3).arg(largest, 0, 'f', 3)
@@ -772,8 +812,6 @@ void AppController::setError(const QString &msg)
     emit statusChanged();
 }
 
-// ------------------------------------------------------------------- joints --
-
 void AppController::setAddJoints(bool on)
 {
     if (m_addJoints == on)
@@ -782,16 +820,15 @@ void AppController::setAddJoints(bool on)
     emit jointsChanged();
 }
 
-// After every division: the planner's three stages, logged and drawn. All four
-// division paths call this once their pieces are final (trimmed, on the cage
-// paths), so the log and the pictures describe exactly the pieces on screen.
+// Runs the planner and writes the four figures beside the model.
 void AppController::planAndDrawFigures()
 {
     m_figureNote.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
+    m_reportUrl.clear();
     if (m_sourceMesh.isEmpty() || m_pieces.isEmpty())
-        return;                     // nothing divided from a loaded model
+        return;
 
     const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
     const Planner::TranslationalBlocking model;
@@ -800,8 +837,8 @@ void AppController::planAndDrawFigures()
     for (const QString &line : plan.describe(8))
         qDebug().noquote() << line;
 
-    // Passed in rather than recomputed, so the pictures cannot disagree with
-    // the lines just logged.
+    QElapsedTimer figureTimer;
+    figureTimer.start();
     const PlannerFigure::Result fig =
         PlannerFigure::write(m_pieces, graph, model, plan,
                              PlannerFigure::folderFor(m_loadedPath),
@@ -814,26 +851,76 @@ void AppController::planAndDrawFigures()
         : QStringLiteral("Planner figures: %1")
               .arg(QDir::toNativeSeparators(fig.folder));
 
-    // For the tabs over the view. The version suffix makes QML reload a picture
-    // that the previous division wrote under the same file name.
     ++m_figureVersion;
     for (const QString &path : fig.written)
         m_planFigures << QUrl::fromLocalFile(path).toString()
                          + QStringLiteral("?v=%1").arg(m_figureVersion);
+    m_stats.msFigures = figureTimer.elapsed();
+
     if (!fig.written.isEmpty())
         m_planFolderUrl = QUrl::fromLocalFile(fig.folder).toString();
+
+    m_stats.hasPlan       = true;
+    m_stats.contacts      = graph.contactCount();
+    m_stats.planComplete  = plan.complete;
+    m_stats.caveat        = AssemblyOrder::caveat();
+    m_stats.booleanNote   = m_booleanNote;
+    m_stats.jointNote     = m_jointNote;
+    m_stats.minNeighbours = 0;
+    m_stats.maxNeighbours = 0;
+    for (int i = 0; i < graph.incident.size(); ++i) {
+        const int d = int(graph.incident[i].size());
+        m_stats.minNeighbours = (i == 0) ? d : qMin(m_stats.minNeighbours, d);
+        m_stats.maxNeighbours = qMax(m_stats.maxNeighbours, d);
+    }
+    m_stats.assemblyOrder.clear();
+    for (const Planner::Step &st : plan.assembly)
+        m_stats.assemblyOrder
+            << QStringLiteral("%1 (%2)").arg(st.piece)
+                   .arg(QString::fromLatin1(Planner::dirName(st.dir)));
+    m_stats.stuck = plan.stuck;
+    m_stats.figureFiles.clear();
+    for (const QString &path : fig.written)
+        m_stats.figureFiles << QFileInfo(path).fileName();
+
 }
 
+// Written after the joints are cut, so their stage time and note reach the page.
+void AppController::writeDivisionReport()
+{
+    m_reportUrl.clear();
+    if (!m_stats.hasPlan || m_planFolderUrl.isEmpty())
+        return;
+
+    m_stats.jointNote = m_jointNote;
+
+    const QString folder = QUrl(m_planFolderUrl).toLocalFile();
+    QString reportErr;
+    const QString report =
+        DivisionReport::write(folder,
+                              QFileInfo(m_loadedPath).completeBaseName(),
+                              m_sourceMesh.isEmpty() ? m_mesh : m_sourceMesh,
+                              m_pieces, m_stats, &reportErr);
+    if (report.isEmpty()) {
+        qWarning().noquote() << "REPORT" << reportErr;
+        return;
+    }
+    m_reportUrl = QUrl::fromLocalFile(report).toString();
+    if (!m_figureNote.isEmpty())
+        m_figureNote += QStringLiteral(" \u00b7 report.html");
+}
+
+// Joints follow the removal order: the order is found first, and only the faces
+// it tolerates get a joint.
 void AppController::applyJoints()
 {
     m_jointNote.clear();
     if (!m_addJoints || m_pieces.size() < 2)
         return;
 
-    // The planner decides WHERE joints may go, not the geometry. A pin on every
-    // shared face pegs most pieces on two axes at once and the puzzle then does
-    // not come apart at all - so the removal order is found first, and only the
-    // faces that order can tolerate get a joint.
+    QElapsedTimer jointTimer;
+    jointTimer.start();
+
     const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
     const Planner::TranslationalBlocking bare;
     const Planner::Plan plan = Planner::extract(graph, bare);
@@ -847,7 +934,6 @@ void AppController::applyJoints()
 
     const Planner::JointSet chosen = Planner::chooseAlongOrder(graph, plan);
 
-    // Choose, then verify. The order must still hold with the pegs fitted.
     const Planner::JointedBlocking jointed(chosen);
     QString   why;
     const int broken = Planner::replay(graph, jointed, plan, &why);
@@ -907,4 +993,6 @@ void AppController::applyJoints()
     if (failed > 0)
         m_jointNote += QStringLiteral(", %1 piece(s) FAILED (%2)")
                            .arg(failed).arg(firstErr);
+
+    m_stats.msJoints = jointTimer.elapsed();
 }

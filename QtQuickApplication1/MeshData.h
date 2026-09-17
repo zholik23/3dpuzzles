@@ -1,31 +1,28 @@
 #pragma once
 //
-// MeshData - the single geometry container every loader produces and the
-// viewer consumes. Deliberately dumb: flat float/index arrays, no IRIT
-// types, no Qt Quick types. Increment 4 will hand one of these per puzzle
-// piece to the same viewer.
+// MeshData - the geometry container every loader produces and the viewer
+// consumes. Deliberately dumb: flat float and index arrays, no IRIT types and no
+// Qt Quick types.
 //
 #include <QString>
 #include <QVector>
 #include <cstdint>
 
 struct MeshData {
-    QVector<float>    pos;      // 3 floats per vertex
-    QVector<uint32_t> tris;     // 3 indices per triangle
-    QVector<uint32_t> edges;    // 2 indices per edge (deduped tri edges + polylines)
-    QVector<float>    triNrm;   // 3 floats per triangle, unit face normal
+    QVector<float>    pos;
+    QVector<uint32_t> tris;
+    QVector<uint32_t> edges;
+    QVector<float>    triNrm;
 
-    // Polyline/curve segments are collected here during parsing and merged
-    // into `edges` by buildEdges(). Kept apart so they survive dedup.
     QVector<uint32_t> polylineEdges;
 
     float bmin[3] = { 0, 0, 0 };
     float bmax[3] = { 0, 0, 0 };
 
-    QString sourceKind;             // "STL", "OBJ", "IRIT", "IGES", ...
-    int     objectCount   = 0;      // top-level IRIT objects seen
-    int     freeformCount = 0;      // freeform objects that had to be tessellated
-    int     polygonCount  = 0;      // source polygons before triangulation
+    QString sourceKind;
+    int     objectCount   = 0;
+    int     freeformCount = 0;
+    int     polygonCount  = 0;
 
     int  vertexCount()   const { return pos.size() / 3; }
     int  triangleCount() const { return tris.size() / 3; }
@@ -42,7 +39,7 @@ struct MeshData {
 
     void computeBounds();
     void computeNormals();
-    void buildEdges();          // dedupe triangle edges, then append polylineEdges
+    void buildEdges();
     void finalize() { computeBounds(); computeNormals(); buildEdges(); }
 
     float diagonal() const;

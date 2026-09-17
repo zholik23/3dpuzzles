@@ -1,17 +1,13 @@
 #pragma once
 //
-// MeshView - displays one or more MeshData parts with correct occlusion, using
-// nothing but QtQuick. Qt Quick 3D is not installed here, and a painter's-
-// algorithm wireframe would not survive an exploded assembly (pieces overlap
-// each other constantly), so this rasterises triangles into a QImage with a
-// real z-buffer.
+// MeshView - draws MeshData parts with correct occlusion using nothing but
+// QtQuick. Qt Quick 3D is not installed here, and a painter's-algorithm wireframe
+// cannot survive an exploded assembly, so triangles are rasterised into a QImage
+// with a real z-buffer.
 //
-// Everything is a list of parts: a loaded model is a one-part list, a divided
-// puzzle is one part per piece. Exploding, per-piece colour and hidden-surface
-// removal then all fall out of the same path.
-//
-// Projection is orthographic on purpose: no near plane means no clipping code
-// and no way for a model at an awkward scale to vanish.
+// Everything is a list of parts, so a loaded model and a divided puzzle take the
+// same path. Projection is orthographic on purpose: no near plane means no
+// clipping code and no way for a model to vanish at an awkward scale.
 //
 #include "AppController.h"
 #include "MeshData.h"
@@ -33,39 +29,24 @@ class MeshView : public QQuickPaintedItem {
     Q_PROPERTY(bool  showEdges READ showEdges WRITE setShowEdges NOTIFY viewChanged)
     Q_PROPERTY(bool  hasMesh   READ hasMesh                      NOTIFY meshChanged)
     Q_PROPERTY(int   partCount READ partCount                    NOTIFY meshChanged)
-    // Bound from QML to the AppController context property; the view pulls
-    // fresh geometry whenever the controller reports some.
     Q_PROPERTY(AppController *controller READ controller WRITE setController
                                                      NOTIFY controllerChanged)
 
 public:
     explicit MeshView(QQuickItem *parent = nullptr);
 
-    // Pins the camera to a given box instead of fitting it to whatever is
-    // currently loaded. Needed to render SUBSETS that must register with each
-    // other - one cage cell and the whole model have very different extents, so
-    // without this the two images would be at different scales and could not be
-    // overlaid.
     void setFixedBounds(const float bmin[3], const float bmax[3]);
     void clearFixedBounds();
 
-    void setMesh(const MeshData &mesh);              // single part, no explode
+    void setMesh(const MeshData &mesh);
     void setPieces(const QVector<PuzzlePiece> &pieces);
     void clearMesh();
 
-    // The colour a piece is painted in, and the ground behind everything.
-    // Exposed so figures drawn beside the view (PlannerFigure) colour a
-    // piece's graph node exactly like the piece itself.
     static QRgb tintFor(const PuzzlePiece &piece);
     static QRgb background();
 
-    // Where each piece's bounding-box centre lands on screen at size w x h,
-    // with the current camera and explode. Indexed like the vector given to
-    // setPieces(); a piece skipped for having no geometry gets valid[i] false.
     QVector<QPointF> pieceAnchors(int w, int h, QVector<bool> *valid) const;
 
-    // A unit world axis (0/1/2) as a screen direction, so an arrow drawn over
-    // a render points the way the piece actually moves.
     QPointF axisOnScreen(int axis) const;
 
     AppController *controller() const { return m_controller; }
@@ -102,10 +83,8 @@ protected:
     void wheelEvent(QWheelEvent *e) override;
 
 private:
-    struct SV { float x, y, z; };            // screen space, z toward viewer
+    struct SV { float x, y, z; };
 
-    // Everything the projection needs, worked out once per frame. Shared by
-    // the rasteriser and by pieceAnchors(), so labels land on their pieces.
     struct Camera {
         float centre[3];
         float scale, ox, oy;
@@ -114,26 +93,26 @@ private:
 
     struct Part {
         MeshData mesh;
-        float    push[3] = { 0, 0, 0 };      // direction moved when exploding
+        float    push[3] = { 0, 0, 0 };
         QRgb     tint    = 0;
-        int      base    = 0;                // first index into m_proj
-        int      source  = -1;               // index in setPieces(); -1 from setMesh
+        int      base    = 0;
+        int      source  = -1;
     };
 
-    void rebuildParts();                     // bases, tints, push directions
+    void rebuildParts();
     void projectVertices(int w, int h);
-    bool camera(int w, int h, Camera *c) const;   // false when nothing to show
-    void orient(Camera *c) const;                 // yaw/pitch only
+    bool camera(int w, int h, Camera *c) const;
+    void orient(Camera *c) const;
     void project(const Camera &c, float x, float y, float z, SV *s) const;
     void rasterise(int w, int h);
     void drawEdgesDepthTested(int w, int h);
 
     QVector<Part>   m_parts;
-    QVector<SV>     m_proj;                  // all parts, concatenated
+    QVector<SV>     m_proj;
     QVector<float>  m_zbuf;
     QImage          m_frame;
 
-    float m_bmin[3] = { 0, 0, 0 };           // union bbox, unexploded
+    float m_bmin[3] = { 0, 0, 0 };
     float m_bmax[3] = { 0, 0, 0 };
 
     qreal m_yaw     = -35.0;
@@ -144,8 +123,6 @@ private:
     float  m_fixMin[3] = { 0, 0, 0 };
     float  m_fixMax[3] = { 0, 0, 0 };
     bool  m_shaded    = true;
-    // Off by default for the same reason the Edges checkbox is gone: with
-    // no control, the default is the only setting there is.
     bool  m_showEdges = false;
 
     QPointF        m_lastMouse;

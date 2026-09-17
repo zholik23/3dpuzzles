@@ -1,0 +1,1860 @@
+======================================================================
+AppController.cpp
+======================================================================
+    7: // AssemblyOrder::caveat(), stamped into the report
+   33: // ------------------------------------------------------------------ loading --
+   55: // Synchronous on the GUI thread: a large STL will visibly stall the window.
+   56: // Left that way deliberately for now - moving it to a worker is a change
+   57: // worth making on its own.
+   75: // survives adopting a cage over the top
+   94: // Extent is worth showing: it is the number that decides whether a piece
+   95: // fits the build volume once the division runs.
+  111: // ----------------------------------------------------- choosing a trivariate --
+  138: // Show the whole trivariate until a division is asked for.
+  206: // meshChanged makes the view drop back to the single-part model.
+  211: // ----------------------------------------------------------------- dividing --
+  227: // A dialog that filters by type still lets a name through without one, and
+  228: // the writer picks the format from the extension - so default rather than
+  229: // refuse.
+  281: // Elber Section 5, Fig. 14c -> 14d -> 14e. The division above gives boxy
+  282: // sub-trivariates of the CAGE; stage B intersecting each with the original model is
+  283: // what trims them back to the real surface while leaving the interior cut
+  284: // faces alone. Without it the pieces keep the cage's shape, which is why a
+  285: // cage-divided model comes out cuboid.
+  293: // Dropped cells are not failures: a box cage covers more than the
+  294: // model, so some cells legitimately hold no material.
+  309: // before describePieces(), which writes the report
+  339: // Cut faces are created flat. If they are about to be un-warped they need
+  340: // enough triangles to bend smoothly, otherwise un-warping just tilts one
+  341: // big facet. Straight cuts skip subdivision entirely and cost nothing.
+  357: // Back to the model's own space. The original surface lands exactly where
+  358: // it started; only the cuts keep the curve.
+  366: // The mesh path cuts in world space, so the "domain" is the working mesh's
+  367: // bounding box and the cuts are millimetres, not parameters.
+  376: // before describePieces(), which writes the report
+  414: // Elber Section 5: the cells above are sub-trivariates of the CAGE, so each
+  415: // still has the cage's outer shape until it is intersected with the model.
+  434: // before describePieces(), which writes the report
+  483: // before describePieces(), which writes the report
+  501: // The caller's warning belongs in the written page as well as the on-screen
+  502: // line, and it has to be stored before the report serialises the stats.
+  517: // The adjacency graph is what the joint planner will run its spanning tree
+  518: // over, so its size is worth reporting even before joints exist.
+  519: // adjacencyOfBoxes, not adjacency(): the latter finds neighbours by stepping
+  520: // grid coordinates (i+1, j, k), and BSP cells have none - divideCells stores
+  521: // a LINEAR index in i with j = k = 0. It therefore returned a chain of
+  522: // exactly n-1 edges, which is what made the UI report "9 of 10 cells filled
+  523: // - 8 shared faces". The planner already uses the geometric pairing.
+  574: // Straight cuts: bending them would move the pieces off the sizes that were
+  575: // just measured, and the point of this mode is that the sizes are right.
+  579: // Walks the trivariate's own arc length, then measures each cell's real
+  580: // world bbox and tightens until the pieces genuinely fit.
+  584: // On a mesh this caps the piece size but comes out evenly spaced - in world
+  585: // space equal slabs already satisfy a size limit. The unequal-cut mode for
+  586: // a mesh is Random; this one earns its name only on a trivariate.
+  607: // Straight planar cuts. The warp is left off: it deforms the outer shape of
+  608: // a coarse mesh, and the randomness that matters is in WHERE the cuts fall.
+  612: // Recursive split, not a grid. Rounding the target up to a cube
+  613: // (ceil(cbrt(n))^3) is what used to turn a request for 2 pieces into 8,
+  614: // and it also forced every interior piece to have exactly six
+  615: // neighbours - the regular arrangement the BSP exists to avoid.
+  619: // Split in WORLD proportions, then map the cells back to parameter
+  620: // space. The cage maps its unit domain onto a bounding box that is
+  621: // rarely cubic, so "cut the longest axis" and the minimum-size floor
+  622: // are only meaningful once the domain is scaled to real extents -
+  623: // otherwise a parameter-cubic cell comes out as a long world slab.
+  631: // Voxelise the model so the split can follow the material instead of
+  632: // the cage. Local coordinates: the field's origin is the model's
+  633: // minimum corner, which is exactly what wdom above is measured from.
+  684: // minSide 0 = automatic: the splitter derives a floor from the model size
+  685: // and the target count. That bounds the CELL, which is not the same thing
+  686: // as bounding the PIECE - on an organic model a full-size cell can still
+  687: // clip down to a crumb at a claw tip or the end of a tail. So the cells are
+  688: // clipped, the result measured, and any crumb absorbed by collapsing its
+  689: // parent in the tree: a cell and its sibling merge back into the parent box
+  690: // exactly, so the division stays a partition of boxes throughout.
+  721: // ------------------------------------------------------------------ logging --
+  747: // A ratio of 1.00 means the cuts are evenly spaced; anything above that
+  748: // is the division actually being non-uniform.
+  769: // A recursive split has no per-axis cut lists to print, so what matters is the
+  770: // spread of the cells themselves and how many neighbours each piece ends up
+  771: // with - the two things a global-plane grid cannot vary.
+  786: // Neighbour counts. On a plane grid every interior piece has exactly six;
+  787: // anything else here is the proof the split is genuinely irregular.
+  826: // If the size-based division did its job these two are close together.
+  841: // ------------------------------------------------------------------- joints --
+  851: // After every division: the planner's three stages, logged and drawn. All four
+  852: // division paths call this once their pieces are final (trimmed, on the cage
+  853: // paths), so the log and the pictures describe exactly the pieces on screen.
+  861: // nothing divided from a loaded model
+  870: // Passed in rather than recomputed, so the pictures cannot disagree with
+  871: // the lines just logged.
+  886: // For the tabs over the view. The version suffix makes QML reload a picture
+  887: // that the previous division wrote under the same file name.
+  897: // Everything the planner just decided, plus the model facts and the stage
+  898: // timings, written beside the pictures as one page.
+  924: // The written analysis of this division. Separate from planAndDrawFigures()
+  925: // because the joints are cut after the pictures are drawn, and their stage
+  926: // time and note belong in the page.
+  931: // no division with pictures to report on
+  960: // The planner decides WHERE joints may go, not the geometry. A pin on every
+  961: // shared face pegs most pieces on two axes at once and the puzzle then does
+  962: // not come apart at all - so the removal order is found first, and only the
+  963: // faces that order can tolerate get a joint.
+  977: // Choose, then verify. The order must still hold with the pegs fitted.
+
+======================================================================
+AppController.h
+======================================================================
+   36: // True when Divide will clip the mesh rather than region-extract a
+   37: // trivariate - i.e. no V-rep has been chosen. Lets the UI say which.
+   43: // How the cuts are shaped. Flat is the default; wave and grid bend them.
+   46: // Joints. When on, every shared face gets Elber's pin/hole pair cut into
+   47: // the two pieces by an IRIT boolean, straight after the division runs.
+   52: // Saving only makes sense once a division exists.
+   57: // The planner pictures of the last division as file URLs, in the order
+   58: // pieces, graph, blocking, removal order - shown in tabs over the view.
+   59: // Each carries a ?v= counter so QML reloads a picture rewritten under
+   60: // the same file name. Empty until a division has written them.
+   63: // The written analysis of the last division: model facts, timings,
+   64: // every piece, and what the planner concluded. Empty until written.
+   70: // --- loading ---------------------------------------------------------
+   74: // --- choosing what to divide -----------------------------------------
+   75: // Any trivariate stored in the file that is currently loaded.
+   77: // A known shape, for developing the divider without a fit.
+   79: // A box over the loaded mesh's extent. Stands in for Increment 3: it has
+   80: // the model's size but not its shape.
+   82: // back to the undivided mesh
+   84: // --- saving ----------------------------------------------------------
+   85: // Writes the divided model out. The format follows the extension: .itd,
+   86: // .obj or .stl. `separateFiles` splits an STL into one file per piece,
+   87: // which is what a slicer wants when the pieces go to a printer.
+   90: // --- dividing --------------------------------------------------------
+   91: //
+   92: // These divide whatever is currently the subject: a trivariate if one has
+   93: // been chosen (Elber's method, real solid pieces), otherwise the loaded
+   94: // mesh (clipped pieces that keep the model's true shape). Which one ran is
+   95: // reported in divisionInfo.
+   96: // Every piece the same size and shape, cut by straight planes.
+   99: // Irregular: cut positions pushed off the grid so no two pieces are the
+  100: // same size, and - when `curvePercent` is above zero - the cuts themselves
+  101: // bent into smooth irregular surfaces rather than planes. One seed drives
+  102: // both, so the same seed always reproduces the same puzzle.
+  103: // `pieces` is a target count, not a grid: the domain is split recursively,
+  104: // one cell at a time, so the sizes are independent of each other and the
+  105: // adjacency comes out irregular. Global cut planes cannot do that.
+  108: // Rolls a new seed so the next divide falls differently. The seed is kept
+  109: // internal: it is a number to manage, not a decision to make, and the log
+  110: // still records it so any layout can be reproduced.
+  113: // Non-uniform by physical size: cuts land where the accumulated real-world
+  114: // extent reaches `maxSizeMM`, so pieces come out roughly equal in actual
+  115: // size rather than in parameter space. `maxPerAxis` is a safety stop - a
+  116: // small limit on a big model can otherwise ask for thousands of pieces.
+  119: // --- joints ----------------------------------------------------------
+  122: // --- read side -------------------------------------------------------
+  164: // The mesh the cuts are actually applied to: the model, warped if the cut
+  165: // shape asks for it. Division planes have to be measured on this, not on
+  166: // the original, because the warp moves the bounds.
+  171: // The V-rep equivalent: BSP cells in the trivariate's parameter domain.
+  174: // Cuts the pin/hole pairs into m_pieces. Runs after a division, before the
+  175: // pieces are described, so the reported counts are of the jointed result.
+  177: // After every division: log the planner's three stages and draw
+  178: // them as pictures beside the model (PlannerFigure). Sets m_figureNote.
+  180: // Writes the division report beside the pictures. Called after the
+  181: // joints are cut, so their stage time and note are in the page.
+  184: // Dumps the chosen cut positions and the resulting piece sizes to the debug
+  185: // output, so an even division can be told from an uneven one by reading.
+  192: // The polygonal model as loaded, kept apart from m_mesh because adopting a
+  193: // trivariate REPLACES m_mesh with the cage's tessellation. Elber's Section 5
+  194: // needs the original around afterwards to intersect the cage pieces with.
+  208: // where the planner figures went
+  209: // file URLs for the view's tabs
+  212: // filled as the division runs
+  213: // bumps every write, busts QML's cache
+  218: // On by default: dividing a model is meant to produce jointed pieces.
+  219: // Off by default: the Joints control is hidden, so nothing can turn
+  220: // this off at runtime. The joint code and the addJoints property are
+  221: // untouched - restoring the checkbox is enough to bring it back.
+  224: // IRIT's tessellation fineness (higher = more polygons). Pieces get a
+  225: // lower setting than the whole model: each covers a fraction of the domain
+  226: // but is tessellated to the same density, so N pieces at the model's
+  227: // setting would cost roughly N times the model's polygon count.
+
+======================================================================
+AssemblyOrder.cpp
+======================================================================
+   11: // Does `piece` actually have material at the shared face?
+   12: //
+   13: // The contact was found between two axis-aligned CELLS. After the Boolean the
+   14: // piece may have been pulled back from that face entirely, in which case the
+   15: // cells meet but the pieces do not and the contact is a phantom - it will
+   16: // register as blocking when nothing is physically in the way.
+   17: //
+   18: // Answered by looking for a vertex of the piece's own mesh that lies on the
+   19: // plane, inside the overlap rectangle. A vertex is enough: if the surface
+   20: // reaches the plane at all it has vertices there, because the plane is one of
+   21: // the cutting planes and the Boolean lays an edge loop along it.
+   48: // namespace
+   69: // ---------------------------------------------------------------- step 1
+   95: // How many of those contacts are between cells that touch while the pieces
+   96: // inside them do not. Must be zero on an axis-aligned model.
+   97: //
+   98: // The contact planes are in the units of p0/p1 - the trivariate's PARAMETER
+   99: // domain on the cage path - while the meshes are in world coordinates, so
+  100: // the two cannot be compared directly. The map between them is recovered
+  101: // from the pieces themselves: the cells tile the cage, and the trimmed
+  102: // pieces together span the model, so the extremes of each give the two
+  103: // boxes the map runs between. On the mesh path, where p0/p1 are already
+  104: // world, this comes out as the identity.
+  147: // A world-space tolerance: a fraction of the thinner piece, so it
+  148: // scales with the model instead of assuming its units.
+  164: // ---------------------------------------------------------------- step 2
+  189: // ---------------------------------------------------------------- step 3
+
+======================================================================
+AssemblyOrder.h
+======================================================================
+   54: // 0..5 = +X -X +Y -Y +Z -Z
+   59: // first piece off first
+   60: // the reverse, directions flipped
+   61: // present when it gave up; empty if solved
+   64: // cells meet, material does not
+   72: // all three, in order
+   75: // `tol` is the gap below which two cell faces count as touching. It is in
+   76: // the units of PuzzlePiece::p0/p1, which is the trivariate's PARAMETER
+   77: // domain on the cage path and world units on the mesh path - so a value
+   78: // that suits one path may not suit the other.
+   81: // The same, with the blocking rule swapped out. This is the seam: when a
+   82: // swept-volume or rotational test exists, it arrives here and nothing else
+   83: // in this file changes.
+   87: // Printed with every verdict so a result cannot be quoted without it.
+
+======================================================================
+AssemblyPlanner.cpp
+======================================================================
+   42: // The corridor a piece travels down on its way in: its own box, extended from
+   43: // its final position out to the edge of the world along the approach direction.
+   52: // The volume a piece sweeps while turning `deg` about a line parallel to `axis`
+   53: // through (cu, cv) in the other two coordinates.
+   54: //
+   55: // Sampled rather than solved: the union of the box at several angles. That is
+   56: // why the sample count matters - too few and the union misses the bulge between
+   57: // samples, which would pass an assembly that actually jams.
+   77: // Four corners of the box's cross-section, rotated about (cu, cv).
+   90: // namespace
+  103: // ---- adjacency -------------------------------------------------------
+  112: // ---- spanning tree ---------------------------------------------------
+  113: // Root at the best-connected piece: it stays put while everything else is
+  114: // seated onto it, so the more faces it anchors the better.
+  147: // ---- joints ----------------------------------------------------------
+  148: // Tree edges carry the seating rotation; everything else closes a loop and
+  149: // gets a dovetail.
+  169: // ---- locking ---------------------------------------------------------
+  170: // A spiral about axis A is blocked from unwinding by a dovetail on a face
+  171: // whose normal is perpendicular to A, sliding along A. So each piece needs
+  172: // at least one loop-closing edge on an axis other than its own spiral's.
+  189: // ---- collision -------------------------------------------------------
+  215: // Which side of the parent the child sits on decides which way it comes in.
+  218: // The joint axis runs through the middle of the shared face.
+  230: // the parent is what it seats ONTO
+  262: // Only the first few, or a bad plan buries the console.
+
+======================================================================
+AssemblyPlanner.h
+======================================================================
+   36: // piece the child seats onto (tree edges only)
+   38: // 0/1/2 - normal of the shared face, and for a
+   39: // spiral, the axis it rotates about
+   45: // piece indices, in placement order
+   46: // -1 for the root
+   47: // empty means the plan is valid
+   57: // How far a piece must turn to seat. This is the single number that
+   58: // decides whether an assembly is possible: a multi-turn screw sweeps
+   59: // most of a cylinder and collides with everything, a quarter-turn
+   60: // bayonet sweeps very little. Defaults to a quarter turn.
+   63: // Gap allowed between pieces before two boxes count as touching.
+   66: // How many angles the rotation sweep is sampled at. More is tighter but
+   67: // slower; the sweep is a union of sampled poses, so too few samples
+   68: // UNDER-estimates the swept volume and can pass a plan that would jam.
+   76: // Human-readable summary, for the debug log.
+
+======================================================================
+CadLoader.cpp
+======================================================================
+    3: // brings in the IRIT C headers
+   10: // ---------------------------------------------------------------- formats --
+   15: // IRIT accepts .Z/.gz wrapped data files; look one suffix further back.
+   52: // Binary STL files very often still begin with the word "solid", so the header
+   53: // text is not a reliable discriminator. Size is: a valid binary STL is exactly
+   54: // 84 + 50*N bytes, with N stored as a uint32 at offset 80.
+   66: // little-endian host
+   70: // ------------------------------------------------------- guarded IRIT work --
+   71: //
+   72: // Everything that can trip an IRIT fatal error runs inside IritGuard::run,
+   73: // which longjmps out on failure. These callbacks therefore touch only POD.
+  114: // ------------------------------------------------------------------- load --
+  140: // Phase 1: parse the file.
+  159: // What was actually in the file, recorded before tessellate() consumes it.
+  162: // Phases 2 and 3: tessellate freeforms, triangulate, harvest. Consumes
+  163: // lc.result either way.
+
+======================================================================
+CadLoader.h
+======================================================================
+   21: // .stl            - binary or ASCII, auto-detected
+   22: // .obj            - Wavefront
+   23: // .itd .ibd .imd  - native IRIT, incl. freeforms
+   24: // .igs .iges
+   25: // .stp .step      - recognised, but IRIT has no reader
+   28: // Loads `path` into `out`. Returns false and fills `error` on failure.
+   33: // for the QML FileDialog
+
+======================================================================
+CageBoolean.cpp
+======================================================================
+   14: // The boolean runs inside IritGuard, which longjmps out on an IRIT fatal error,
+   15: // so the context holds only POD and no C++ object is live across the call.
+   17: // the cage piece
+   18: // the model
+   20: // 0 = intersect, 1 = union
+   27: // Both operands defensively re-closed: an object out of the tessellator or
+   28: // out of a previous boolean can have open vertex lists, and IRIT rejects
+   29: // those outright rather than coping.
+   38: // Labels every triangle with the connected component it belongs to. Welds
+   39: // first: boolean output arrives with coincident-but-distinct vertices, and
+   40: // without a weld every triangle looks like its own island.
+   42: // the welded mesh the labels refer to
+   63: // Iterative find with path halving - a recursive one blows the stack on a
+   64: // 20k-triangle piece.
+   95: // Smallest gap between two axis-aligned boxes; 0 when they touch or overlap.
+  108: // Joins two solids by concatenating them and welding the coincident vertices
+  109: // along the cut face they share.
+  110: //
+  111: // The fallback for when a union will not run. It leaves the shared face in
+  112: // place as an internal wall, which a clean union would have dissolved, but it
+  113: // cannot fail and it gets both properties that matter here: the two lumps end
+  114: // up ONE connected component, and the volume stays right - the wall is
+  115: // traversed once in each direction, so its contribution to the divergence
+  116: // integral cancels regardless of how either side happens to be triangulated.
+  130: // namespace
+  144: // The cage pieces come from trivariate boundary tessellation, which does
+  145: // not guarantee a consistently wound solid. Fixing that here rather than
+  146: // inside fromMesh keeps the conversion itself a pure translation.
+  156: // A fresh copy of the model per piece. IRIT's booleans consume and modify
+  157: // their operands, so sharing one object across every piece would corrupt it
+  158: // after the first intersection.
+  177: // Succeeded with nothing in it: the cell holds no material.
+  182: // The operands are IRIT's to free once the boolean has taken them, and
+  183: // after a longjmp their state is unknown, so they are deliberately left
+  184: // alone here. Leaking one failed piece beats a double free.
+  198: // The result comes back wound the way it was fed in - inward, which is
+  199: // inside-out for everything downstream. Put it back on the app's
+  200: // convention so volumes, normals and shading stay meaningful.
+  236: // Each component must stand on its own as an outward-wound solid: it is
+  237: // about to be measured and possibly merged independently of the mesh it
+  238: // came out of.
+  250: // Boolean union, used to reattach a detached lump to its neighbour. Same
+  251: // winding convention and the same guarded call as the intersection.
+  307: // Anything under this is debris rather than a piece, and is discarded.
+  308: //
+  309: // Measured against an AVERAGE PIECE, not against the model, because that is
+  310: // what decides whether a lump is worth keeping: half a percent of a piece is
+  311: // far below anything that can be printed or handled. On the armadillo at 6
+  312: // pieces the floor lands near 200 - which discards a 29-unit speck that was
+  313: // otherwise being promoted to a seventh "piece", while keeping the genuine
+  314: // detached lumps that run 500..1100.
+  315: //
+  316: // The cost is explicit: the discarded volume is reported, so a run that
+  317: // throws away more than a rounding error says so rather than quietly
+  318: // returning less than the model.
+  332: // Does this cell hold any of the model at all? Used only to sanity
+  333: // check a drop: an empty result for a cell that demonstrably contains
+  334: // model vertices is a failure, not an empty cell, and is reported as
+  335: // one rather than quietly discarding material.
+  348: // correct: nothing there to keep
+  358: // keeps its boxy geometry
+  362: // One cell can hold several disjoint lumps of material. Keep the
+  363: // largest as the piece, bin the numerical debris, and hold the rest
+  364: // aside to be given back to whichever neighbour they belong to.
+  390: // Give every detached lump back to the piece it is actually attached to.
+  391: // The lump was severed by a cut plane, so the material continues into the
+  392: // neighbour on the other side of it: that neighbour is the one whose box
+  393: // the lump touches. A union rather than a concatenation, so the shared cut
+  394: // face is dissolved and the result is one solid rather than two boxes
+  395: // glued together.
+  406: // Welded, not unioned. IritBooleanOR is the right operation here in
+  407: // principle, but the operands share a cut face exactly, and that is
+  408: // the configuration IRIT's booleans handle worst: across every run
+  409: // measured it declined 100% of the time - and it does so by way of
+  410: // an assert inside bool1low.c, which in a GUI build puts up a modal
+  411: // dialog the guard cannot suppress (IRIT's static libs carry their
+  412: // own CRT, so _CrtSetReportMode here does not reach it). Calling it
+  413: // therefore bought nothing and cost a crash.
+  414: //
+  415: // The weld leaves the shared face as an internal wall where a union
+  416: // would have dissolved it. Both properties that matter survive: the
+  417: // result is ONE connected component, and the volume is right - the
+  418: // wall is traversed once in each direction, so it cancels.
+  423: // did not actually join
+  426: // Reattaching must conserve volume exactly. Checked rather than
+  427: // assumed: an inside-out lump subtracts instead of adding, and
+  428: // the only symptom is a total that looks merely plausible.
+  448: // Touched nothing, or the union would not have produced a single
+  449: // solid. Standing it up as its own piece is honest; silently
+  450: // gluing it to a neighbour it does not adjoin would not be.
+  462: // Postcondition. Every piece must be exactly one solid; anything else is a
+  463: // piece nobody can print or assemble, and it gets said out loud.
+
+======================================================================
+CageBoolean.h
+======================================================================
+   30: // pieces that came back with real geometry
+   31: // cage cell held no model material - see below
+   32: // boolean errored, or returned nothing usable
+   33: // piece was empty before we started
+   34: // debris too small to be a piece - see below
+   35: // how much material that debris carried
+   36: // detached lumps unioned back into a neighbour
+   37: // ditto, but joined at the shared cut face
+   38: // lumps that touched nothing; kept standalone
+   39: // FINAL pieces still made of >1 solid (must be 0)
+   41: // one line per failure, naming the piece
+   42: // non-failures worth reporting, e.g. drops
+   45: // A box cage always covers more than the model, so some cells come out
+   46: // holding no material at all - four of a cow's 27 cells, for instance. An
+   47: // empty intersection there is the CORRECT answer, and such pieces are
+   48: // dropped rather than counted as failures. Keeping them (the earlier
+   49: // behaviour) left boxes floating beside the model and inflated the piece
+   50: // total to 186% of the model volume.
+   51: //
+   52: // Empty is told from broken by the guard, not by guesswork: IritGuard
+   53: // replaces IRIT's own fatal handler, so every real boolean failure comes
+   54: // back as an error rather than as an empty object. An empty result from a
+   55: // call that reported success therefore means the cell and the model really
+   56: // are disjoint.
+   57: //
+   58: // CONNECTEDNESS. A cage cell is a convex box; the model is not convex. One
+   59: // cell can therefore catch several lumps of material with air between them
+   60: // - a slice of thigh and a slice of tail - and the intersection returns all
+   61: // of them as one "piece". Such a piece is not a body: it cannot be printed
+   62: // as one part and there is no material path for a joint to act through. On
+   63: // the armadillo this is common, and it gets WORSE with fewer pieces,
+   64: // because bigger cells span more of the model (measured: 3 of 6 pieces at 6
+   65: // pieces, carrying 8 detached lumps between them).
+   66: //
+   67: // This is inherent to the cage method rather than to any one splitter, and
+   68: // it is why the paper demonstrates on a head - a blob, where a box cell
+   69: // almost never catches two disjoint parts.
+   70: //
+   71: // Every intersection is therefore split into connected components and:
+   72: //   * components of negligible volume are discarded as boolean noise
+   73: //     (measured on the armadillo: real lumps run 72..1100 while the
+   74: //     numerical debris sits at 1e-7..1, three orders of magnitude apart);
+   75: //   * the largest component stays as the piece;
+   76: //   * every other real lump is given back to the neighbouring piece it is
+   77: //     actually attached to, since the material continues across the cut
+   78: //     plane that severed it.
+   79: // A lump that turns out to touch nothing is kept as its own piece and
+   80: // counted in `orphans` rather than being quietly attached to something it
+   81: // does not adjoin. `multiPart` re-checks the finished pieces and must be 0.
+   83: // Replaces each piece's mesh with (piece ∩ model), and REMOVES pieces whose
+   84: // cell held no material. Pieces that fail keep their original boxy
+   85: // geometry, so the result is never silently emptied - the caller can see
+   86: // from `failed` how much of the output is still cage.
+   87: //
+   88: // `model` should be watertight. IRIT's booleans on an open shell produce
+   89: // garbage rather than an error, so an open model is reported in the result
+   90: // and the intersection is attempted anyway.
+   96: // real geometry came back
+   97: // succeeded, but cell and model are disjoint
+   98: // the boolean errored
+  101: // One piece, for testing the step in isolation.
+  107: // Boolean union of two solids, used to reattach a detached lump.
+  111: // Connected components of a mesh, largest first. Exposed because "is this
+  112: // piece one solid?" is a question worth asking of any division, not only
+  113: // of this one.
+
+======================================================================
+CutWarp.cpp
+======================================================================
+    8: // Cubic Bernstein basis, for the control-point patch.
+   36: // namespace
+   53: // Split the budget across the rounds so the total excursion stays near
+   54: // `amount` however many rounds there are.
+   73: // Exactly the forward loops in reverse: rounds backwards, and within each
+   74: // round the axes backwards. At every step the other two coordinates already
+   75: // hold the same values apply() saw, so the same amount comes straight off.
+
+======================================================================
+CutWarp.h
+======================================================================
+   35: // fraction of the model's bbox diagonal
+   38: // Per round, per axis, a 4x4 grid of control heights in [-1, 1], read as a
+   39: // bicubic Bezier. Bezier patches stay inside the range of their controls,
+   40: // so `amount` is a genuine bound on how far a cut can bend.
+   43: // Fills the control grids from `seed`. Call after changing the seed.
+   48: // In-place warp / un-warp of one world point. `bmin`/`bmax` are the
+   49: // ORIGINAL model bounds and must be the same for both calls.
+
+======================================================================
+DivisionReport.cpp
+======================================================================
+   15: // ---------------------------------------------------------------- measuring --
+   17: // Signed volume by the divergence theorem. Positive for an outward-wound
+   18: // closed mesh; the sign is kept out of the report and only the size is shown,
+   19: // because the app's own pieces come back from IRIT wound either way.
+   35: // Every directed edge needs its opposite twin for the mesh to be closed. An
+   36: // open mesh makes the volume above meaningless, so the report says which it is
+   37: // rather than printing a number that cannot be trusted.
+   58: // ----------------------------------------------------------------- writing --
+   74: // "-" for a stage that did not run, so a blank is never read as "instant".
+  110: // namespace
+  139: // The check that matters: the pieces must add up to the model. It only
+  140: // means anything when both are closed solids, so it is labelled when not.
+  165: // ---------------------------------------------------------------- model
+  197: // ------------------------------------------------------------ the split
+  239: // --------------------------------------------------------------- timing
+  250: // --------------------------------------------------------------- pieces
+  298: // -------------------------------------------------------------- planner
+  331: // -------------------------------------------------------------- figures
+
+======================================================================
+DivisionReport.h
+======================================================================
+   28: // --- what was asked for ------------------------------------------------
+   29: // "Random", "Uniform", "Max piece size"
+   30: // "V-rep (bounding cage)" or "mesh"
+   31: // pieces asked for, 0 when not a count mode
+   32: // cells the split produced
+   35: // --- the voxel field, when one was built -------------------------------
+   40: // what the field measured the model to be
+   42: // --- timings, milliseconds; -1 means "this stage did not run" ----------
+   45: // region extraction / clipping
+   46: // Elber section 5 boolean
+   51: // --- what the trim did -------------------------------------------------
+   56: // --- the planner -------------------------------------------------------
+   62: // "9 (-X)", "8 (-X)", ...
+   66: // file names, relative to the report
+   71: // Writes `report.html` into `folder`. Returns the full path, or an empty
+   72: // string with `error` set. `model` is the solid that was divided, used for the
+   73: // model facts and as the denominator of the volume check.
+   81: // namespace DivisionReport
+
+======================================================================
+IritGuard.cpp
+======================================================================
+   28: // MSVC warns that setjmp/longjmp bypasses destructor calls. That is exactly
+   29: // why run() is restricted to a POD context and a plain function pointer.
+   51: // Nothing armed: we are outside a guarded call. Returning lets IRIT
+   52: // continue its own error path rather than jumping into a dead frame.
+   55: // One thunk per library. Each maps the library's error enum to text via that
+   56: // library's DescribeError, then bails out.
+   69: // Not every IRIT failure goes through a fatal-error callback. The IRIT
+   70: // libraries linked here are built with DEBUG, so some unhandled geometric
+   71: // configurations end in assert() -> abort() instead: a boolean on a spiky
+   72: // non-convex model dumps the intersection loop it could not close and the
+   73: // process dies with exit code 3, taking every other piece down with it.
+   74: //
+   75: // abort() cannot be trapped by the callbacks above, but it does raise SIGABRT
+   76: // first, and that can be. Jumping out of the handler leaves IRIT's own heap
+   77: // state unknown, so this is containment, not recovery: it exists so one
+   78: // impossible piece is reported and skipped rather than ending the run.
+   85: // namespace
+  107: // Back here from a fatal error or an assertion. The CRT report mode is
+  108: // deliberately left as-is: another guarded call is usually next, and a
+  109: // dialog appearing between them is exactly what this avoids.
+  115: // Trap the abort path for the duration of the call only, and put the
+  116: // previous disposition back afterwards so nothing outside is affected.
+  120: // Send IRIT's assertions to stderr rather than to a message box. The debug
+  121: // CRT puts up a modal Abort/Retry/Ignore dialog BEFORE it raises SIGABRT,
+  122: // so without this the window blocks the whole app and the handler below
+  123: // never runs - invisible in a console run, fatal in the GUI.
+
+======================================================================
+IritGuard.h
+======================================================================
+   18: // Install the fatal-error handlers on every IRIT library we link. Call once,
+   19: // from main(), before any other IRIT call.
+   22: // Invoke fn(ctx) with IRIT fatal errors trapped.
+   23: // Returns true if fn ran to completion, false if IRIT raised a fatal error.
+   26: // Message from the most recent trapped error (empty if none).
+   29: // namespace IritGuard
+
+======================================================================
+IritJoint.cpp
+======================================================================
+   18: // --------------------------------------------------------------- mesh in ---
+   19: //
+   20: // MeshData is a flat triangle soup; IRIT wants a chain of polygons, each with
+   21: // its plane equation set. Booleans need that plane, so IritPrsrUpdatePolyPlane
+   22: // is not optional - a polygon without one is silently skipped.
+   24: // The mesh-to-IRIT conversion and the list closing live in IritSolid now: the
+   25: // cage-vs-model intersection needs exactly the same two fixes, and one copy is
+   26: // better than two that can drift apart.
+   34: // ------------------------------------------------------------- the joint ---
+   35: //
+   36: // Elber's pin, section for section out of PuzTile() in puz_vol.irt. Built once
+   37: // at unit size about +Z, then transformed into place per joint.
+   38: //
+   39: //   Crc = pcircle( vector( 0, 0, 0 ), 0.2 )
+   40: //   sFromCrvs( list( Crc          * tz( -0.02 ),
+   41: //                    Crc * sc( 0.75  ),
+   42: //                    Crc * sc( 0.775 ) * tz( 0.2 ),
+   43: //                    Crc * sc( 0.8   ) * tz( 0.3 ),
+   44: //                    Crc * sc( 0.8   ) * tz( 0.4 ),
+   45: //                    Crc * sc( 0.6   ) * tz( 0.6 ),
+   46: //                    Crc * sc( 0.0   ) * tz( 0.6 ) ), 3, kv_open )
+   51: // cap closing the sunk base: without it the loft is a
+   52: // tube open at the root, and the UNION that makes the
+   53: // pin loses material there. Elber never needs this -
+   54: // his open root is closed by the tile it grows from -
+   55: // but ours is a free-standing tool used twice.
+   56: // the sunk base ring - depth from p.baseSink
+   59: // the barb swells here ...
+   61: // ... and necks in before the tip, which is what holds
+   62: // the cap: without it the loft is not a solid
+   70: // His table is written against a 0.6-tall pin; scaling z keeps the profile
+   71: // proportional if the height is changed.
+   76: // The sentinel -1 marks the sunk base section; everything else is
+   77: // Elber's table scaled to the requested height.
+   84: // A zero-radius circle cannot be constructed, so the cap is built full
+   85: // size and then collapsed by a zero scale - Elber's `Crc * sc( 0.0 )`.
+   86: // Building it at a tiny radius instead is NOT the same thing: it leaves
+   87: // a real ring of control points, the loft stays open there, and the tip
+   88: // came out with 16 unmatched edges.
+  107: // The lofted surface, tessellated into a closed polygonal solid.
+  135: // Consumes srfObj and returns a chain; the loft is one surface, so the
+  136: // chain is one polygonal object.
+  140: // The tessellator hands back OPEN vertex lists, which the booleans refuse.
+  148: // Places the unit tool: clearance scale, then size, then onto the face normal,
+  149: // then out to the site. IRIT is row-vector, so the multiplication order reads
+  150: // the same as the `Obj * m1 * m2` chain in the .irt.
+  164: // +Z -> +X
+  165: // +Z -> +Y
+  176: // ------------------------------------------------------------- the guard ---
+  177: //
+  178: // IRIT's fatal errors longjmp, so everything that can raise one runs inside a
+  179: // POD context with no C++ destructors in scope.
+  222: // IRIT hands back the first operand when the two do not intersect.
+  223: // That is a real result - the piece is unchanged - not a crash.
+  245: // namespace
+  247: // ------------------------------------------------------------------ api ----
+  251: // Widest point of the loft, in joint-local units: the base collar that sits
+  252: // just inside the face.
+  257: // Span `faceFraction` of the narrower side, then hold the pin short of the
+  258: // depth of both pieces it lives between.
+  267: // Printability floor: a joint thinner than the printer can lay down is not
+  268: // a joint. Leaving the face bare is the honest outcome.
+  288: // the planner left this face bare
+  329: // Widest point of the loft, in joint-local units: the base collar that sits
+  330: // just inside the face.
+  344: // Which one is on the low side of the shared plane.
+  412: // The longjmp left IRIT's allocations unreachable. Leaking them beats
+  413: // freeing a half-consumed boolean result.
+  420: // Every boolean declined: the tool never met the piece. Almost always
+  421: // an open (non-watertight) piece, or a joint placed off its surface.
+  452: // The neck: the narrowest section that still carries material.
+
+======================================================================
+IritJoint.h
+======================================================================
+   39: // Elber's numbers, in joint-local units. `pinRadius` is his
+   40: // `Crc = pcircle( vector( 0, 0, 0 ), 0.2 )`; the section scales that ride
+   41: // on it are fixed, because they are what the pin IS.
+   43: // his sections span z = 0 .. 0.6
+   45: // How far below the mating face the loft starts, as a fraction of `height`.
+   46: // Elber's `tz( -0.02 )` is 3% of his 0.6 pin - fine at his unit scale, but
+   47: // once the joint is scaled to a real face that becomes ~0.1 mm of overlap,
+   48: // which is at or under the boolean's own tolerance. The tool then only
+   49: // grazes the face instead of crossing it and the result comes back short.
+   50: // Sinking it properly costs nothing: below the face is the pin's own piece,
+   51: // already solid, and it is outside the piece being bored.
+   54: // Smallest pin the printer can make, in model units. Faces that cannot
+   55: // carry at least this get NO joint rather than an unprintable one - the
+   56: // planner is happy with unpegged faces, so this is a free constraint.
+   57: // three 0.4 mm extrusions
+   59: // Female clearance, his SclJointXY / sz( 1.05 ).
+   63: // How much of the shared face the joint may take up, and the limits it is
+   64: // clamped to in model units.
+   66: // 0 = no floor
+   67: // 0 = no ceiling
+   69: // IRIT tessellation of the lofted surface
+   72: // One joint on one piece. `at` is the point on the shared face, `axis` is the
+   73: // face normal (0/1/2) and the joint always points along +axis: the pin grows
+   74: // out of the low piece, the hole is bored into the high piece from the same
+   75: // side, so the two are the same solid in the same place.
+   78: // model units across the joint
+   80: // true = union a pin, false = subtract a hole
+   85: // Works out where every joint goes. For each shared face: a PIN on the piece
+   86: // on the low side of the axis and the matching HOLE on the high side, both at
+   87: // the centre of the overlap rectangle and both pointing along +axis - which is
+   88: // Elber's XMinHole / XMaxPin rule, and needs no assembly order to decide.
+   89: //
+   90: // The size follows the face: a joint is scaled to `faceFraction` of the
+   91: // smaller side of the overlap, then clamped so the pin cannot be longer than
+   92: // the piece it has to reach into. Returns one list per piece, indexed as
+   93: // `pieces`. `skipped` counts faces too small to carry a joint.
+  100: // Placements for exactly the contacts the PLANNER chose. This is the one to
+  101: // use: a joint on every shared face pegs most pieces on two different axes at
+  102: // once, and then nothing can be pulled out - the planner decides which faces
+  103: // may carry one without breaking the removal order it found.
+  111: // Size for a joint on one face, or 0 if the face cannot carry one: scaled to
+  112: // `faceFraction` of the narrower side, then held short of the depth available.
+  115: // Applies every placement to one piece. On failure `mesh` is left untouched,
+  116: // `error` is set, and false is returned; `applied` reports how many booleans
+  117: // actually took (IRIT can decline one and still return a usable object).
+  118: // `declined` counts booleans IRIT refused to perform because the two objects
+  119: // did not intersect. That is NOT cosmetic: a declined hole leaves a pin with
+  120: // nowhere to go, and the puzzle will not close up. It must be reported.
+  128: // The joint on its own, for looking at it. Same loft the booleans use.
+  131: // Thinnest solid dimension of a pin built at `size` - the diameter at the
+  132: // neck. Below about three extrusion widths the pin is not printable, which is
+  133: // easy to walk into on small pieces.
+  136: // namespace IritJoint
+
+======================================================================
+IritMesh.cpp
+======================================================================
+    7: // ------------------------------------------------------- guarded IRIT work --
+    8: //
+    9: // Conversion can trip an IRIT fatal error, so it runs inside IritGuard::run,
+   10: // which longjmps out on failure. Its callback therefore touches only POD.
+   18: // Tessellates freeform geometry and triangulates every polygon over the whole
+   19: // forest. IritPrsrConvertFreeFormHierachy CONSUMES the object it is handed and
+   20: // returns a (possibly longer) chain, so the caller frees only `out`.
+   30: // TriangleOnly is deliberately FALSE: it routes through
+   31: // IritGeomConvertPolysToTriangles, which access-violates on some
+   32: // valid inputs. Harvester::triangulate does the job instead.
+   66: // Walks the raw parse result and names what is in it. Runs BEFORE conversion,
+   67: // because conversion consumes the objects - and when nothing displayable comes
+   68: // out the far end, this inventory is the only thing that can tell the user why.
+   83: // A list element still points at its siblings through Pnext,
+   84: // so it is described on its own rather than walked as a chain.
+   96: // A scalar (E1) trivariate is a volumetric *function*, not a solid: it
+   97: // has no boundary geometry to tessellate. Worth calling out by name -
+   98: // it is a shape this project cares about but cannot simply display.
+  117: // malformed file with a cyclic tree
+  140: // Freeform that survived conversion (an unsupported subtype).
+  141: // Counted so the UI can say it was not displayed.
+  145: // Numeric / matrix / string objects are ignored on purpose.
+  150: // A list element carries its own Pnext into the parent's list; following it
+  151: // here would re-walk siblings, so children are visited one at a time.
+  180: // Vertices are welded on exact coordinates. STL in particular repeats every
+  181: // vertex once per facet, so welding is what turns a triangle soup into a
+  182: // mesh with a meaningful edge list - and later, a cell-adjacency graph.
+  185: // -0.0f and 0.0f compare equal but hash differently, which would put
+  186: // two "equal" keys in the hash and silently unweld a seam. Normalise.
+  203: // runaway list
+  205: // IRIT may close the loop
+  217: // degenerate after welding
+  224: // Ear clipping, done here rather than by IRIT.
+  225: //
+  226: // ConvertFreeFormHierachy's TriangleOnly flag routes through
+  227: // IritGeomConvertPolysToTriangles -> IritGeomConvexPolyObjectN, which
+  228: // access-violates on some perfectly valid inputs (data/pl_cncyl.itd and
+  229: // data/pl_sold3.itd both kill the process). So polygons arrive here
+  230: // untriangulated. Ear clipping is also correct for non-convex faces,
+  231: // which a naive triangle fan is not.
+  242: // Newell normal, then drop the dominant axis to get a 2D projection
+  243: // that cannot collapse the polygon to a line.
+  265: // Work on a mutable ring of positions into `loop`, wound CCW in 2D.
+  275: // no ear found in a full pass
+  297: // self-intersecting or degenerate: fan the rest
+  314: // reflex or collinear
+  320: // Inside test via the three edge signs of the candidate ear.
+  357: // one polygon's welded vertex indices
+  358: // that polygon projected to 2D
+  359: // ear-clipping working ring
+  362: // namespace
+  363: // --------------------------------------------------------------- interface --
+  371: // nothing to do, not a failure
+  376: // IRIT's defaults, then our tweaks
+  378: // we want polygons, not isolines
+  386: // doConvert already took ownership of whatever it consumed, and the
+  387: // partial chain is unreachable after the longjmp. Leaking a failed
+  388: // parse beats freeing a half-consumed forest.
+
+======================================================================
+IritMesh.h
+======================================================================
+   26: // Tessellates freeform geometry, triangulates polygons, and harvests the lot
+   27: // into `out`. CONSUMES `objs` - it is freed here, valid or not, and the caller
+   28: // must not touch it afterwards.
+   29: //
+   30: // `fineNess` is IRIT's polygonal approximation control (20 is its default; a
+   31: // higher number means more polygons).
+   32: //
+   33: // Returns false with `error` set if IRIT raised a fatal error along the way.
+   34: // Succeeding with an empty mesh is possible and is NOT an error - check
+   35: // out->isEmpty() when that matters.
+   41: // Names the object types in a chain, for diagnostics. Read-only; call it
+   42: // BEFORE tessellate(), which consumes the objects.
+   45: // namespace IritMesh
+
+======================================================================
+IritSolid.cpp
+======================================================================
+   11: // Signed volume by the divergence theorem: positive when the mesh is wound
+   12: // outward, negative when it is wound inward.
+   31: // IRIT decides inside from outside by the polygon winding - that is what
+   32: // IritPrsrUpdatePolyPlane turns into the plane equation the booleans use.
+   33: // Measure how the mesh arrived, then correct it to what the caller asked
+   34: // for. See the Winding enum for why the booleans need Inward.
+   56: // Degenerate triangle: no plane, so no use to a boolean. Dropping
+   57: // it is right - keeping it would poison the whole operation. The
+   58: // list is still linear here, so freeing it terminates.
+   70: // The booleans build adjacencies, and that needs every vertex list CLOSED
+   71: // back on itself. A NULL-terminated list is rejected outright with
+   72: // "Vertex list must be circular for proper adjacencies". Done here, after
+   73: // the planes, so the failure path above still walks a linear list to free.
+   78: // IRIT's booleans build vertex adjacencies, and that needs every vertex list
+   79: // closed back on itself. Objects that come out of the tessellator, out of a
+   80: // transform copy, or out of a previous boolean can all be open, so this is
+   81: // applied defensively to both operands before every operation rather than once
+   82: // at the start.
+  126: // Hash on a grid of side eps. Two points closer than eps can still fall in
+  127: // neighbouring cells, so each point is looked up across its 27-cell
+  128: // neighbourhood rather than only its own cell.
+  176: // collapsed by the weld
+  188: // Adjacency is the whole mechanism here, so coincident-but-distinct
+  189: // vertices have to go first: without this the six faces of a tessellated
+  190: // cage box share no edges and the walk below propagates nothing.
+  197: // Undirected edge -> the triangles that use it.
+  209: // which shell each triangle is in
+  212: // Every component gets its own walk: a divided piece can legitimately be
+  213: // more than one shell.
+  231: // Two correctly-oriented neighbours traverse their shared
+  232: // edge in OPPOSITE directions. Same direction means one of
+  233: // them is inside-out.
+  249: // Consistent within each shell now, but a shell can still be consistently
+  250: // inside-out - and the decision has to be made PER SHELL, not once for the
+  251: // whole mesh. A piece cut from a non-convex model can be several separate
+  252: // lumps, and testing only the total lets a negative lump hide inside a
+  253: // larger positive one. The cost of getting this wrong is silent: such a
+  254: // lump SUBTRACTS when the piece is later measured or merged, which showed
+  255: // up as a reattachment landing exactly two lump-volumes light.
+  273: // namespace IritSolid
+
+======================================================================
+IritSolid.h
+======================================================================
+   19: // IritPrsrOpenPolysToClosed
+   25: // Signed volume by the divergence theorem: positive when the mesh is wound
+   26: // outward, negative when wound inward. Only meaningful for a closed mesh.
+   29: // True when every directed edge has its opposite twin - i.e. the mesh is
+   30: // watertight. IRIT's booleans on an open shell produce garbage rather than an
+   31: // error, so this is worth checking before handing one over.
+   34: // Which way the polygon planes should face once handed to IRIT.
+   35: //
+   36: // MEASURED, not assumed. IRIT builds a polygon's plane from its vertex order,
+   37: // and that plane is how the booleans decide inside from outside - but the sign
+   38: // is the OPPOSITE of the right-hand rule signedVolume() uses. Feeding IRIT a
+   39: // conventionally outward-wound solid inverts both containment tests, and an
+   40: // intersection then silently computes a union: AND of a bounding box with an
+   41: // inscribed sphere returned the box (64000, every box polygon, no sphere
+   42: // polygon) instead of the sphere. Inverting the winding returned the sphere.
+   43: //
+   44: // So Inward is what the booleans want. Outward is kept because it is what the
+   45: // pre-existing joint code was built and tuned against; the two call sites now
+   46: // say which they mean instead of sharing one silent default.
+   48: // right-hand rule: signedVolume() > 0
+   49: // what IRIT's booleans need
+   52: // MeshData to an IRIT polygon object, ready for a boolean. Returns NULL if
+   53: // nothing usable survived.
+   54: //
+   55: // Two things are not optional and neither is obvious:
+   56: //   * every polygon needs its plane equation (IritPrsrUpdatePolyPlane), since
+   57: //     that is how the booleans tell inside from outside;
+   58: //   * every vertex list has to be CLOSED back on itself, or IRIT rejects the
+   59: //     operand with "Vertex list must be circular for proper adjacencies".
+   60: // The mesh's own winding is measured and corrected to `w`, so the caller does
+   61: // not have to know how the mesh happened to arrive.
+   64: // Makes every triangle agree with its neighbours about which way is out, then
+   65: // flips the whole thing if it ended up inside-out.
+   66: //
+   67: // Needed because a trivariate's boundary comes back as SURFACES, not as an
+   68: // oriented solid: IRIT tessellates each of the six faces on its own terms, so
+   69: // neighbouring faces can disagree. A boolean decides inside from outside using
+   70: // the polygon planes, and mixed winding makes that meaningless - the symptom is
+   71: // a piece whose measured volume is about half what its box should be, and an
+   72: // intersection that comes back several times too large.
+   73: //
+   74: // A global flip cannot fix mixed winding, only uniformly-inverted winding, so
+   75: // this has to run before fromMesh's flip, not instead of it.
+   78: // Merges vertices that are within `eps` of each other (default: a whisker of
+   79: // the bounding-box diagonal), rewrites the triangle indices onto the survivors
+   80: // and drops any triangle that collapsed in the process.
+   81: //
+   82: // MeshData::finalize welds on EXACT float equality, which is enough for a mesh
+   83: // read from a file but not for one that came out of the tessellator: IRIT
+   84: // evaluates each boundary surface of a trivariate on its own, so a box corner
+   85: // reached from the u face and from the v face differs in the last few bits.
+   86: // The box then has no shared edges at all - six loose quads - and anything that
+   87: // reasons about adjacency (orientConsistently, isClosed, a boolean) is working
+   88: // on a mesh that is not actually a solid.
+   91: // Re-closes the vertex lists of an object. Objects coming out of the
+   92: // tessellator, a transform copy, or a previous boolean can all be open, so this
+   93: // is applied defensively to both operands before every operation.
+   96: // namespace IritSolid
+
+======================================================================
+MaterialField.cpp
+======================================================================
+   35: // Inside/outside by column parity: for every (x,y) column, collect where the
+   36: // surface crosses it in z, sort, and fill the spans between pairs. One pass
+   37: // over the triangles - far cheaper than a ray cast per voxel, of which there
+   38: // would be close to a million.
+   46: // Signed area of the XY projection. Near zero means the triangle is
+   47: // seen edge-on and crosses no column interior.
+   58: // Columns whose CENTRE can fall inside the triangle.
+   64: // The sample point is nudged off the exact voxel centre by an
+   65: // irrational fraction of a cell. A centre that lands precisely on an
+   66: // edge shared by two triangles is counted twice or not at all, and on a
+   67: // mesh whose edges line up - a UV sphere's meridians, any lathed or
+   68: // extruded model - that misfires along a whole seam at once, leaving an
+   69: // empty curtain of columns that splits the model in two. The offset is
+   70: // far below a voxel, so it changes no volume, but it cannot coincide
+   71: // with a mesh edge.
+   78: // Barycentric coordinates of the column centre.
+  101: // An odd count means the surface is not watertight along this
+  102: // column. Dropping the unpaired crossing keeps the fill sane rather
+  103: // than flooding the rest of the column.
+  113: // kept for connectivity queries
+  115: // Inclusive 3D prefix sum, offset by one so index 0 is an empty margin and
+  116: // a query never has to special-case the low edge.
+  147: // Half-open [a, b): voxels whose centre lies in the box.
+  209: // the outer loop counted every occupied voxel once, but only the unseen
+  210: // ones started a lump - recount the total properly
+  226: // nothing here, nothing to sever
+  230: // Seed at the first occupied voxel, then flood through 6-neighbours,
+  231: // confined to the box.
+  284: // Inclusion-exclusion over the eight corners of the prefix sum.
+
+======================================================================
+MaterialField.h
+======================================================================
+   25: // Voxelises `mesh`. `maxRes` is the resolution of the longest axis; the
+   26: // others are scaled to keep voxels roughly cubic.
+   32: // Material volume inside the local-space box [lo, hi]. Quantised to the
+   33: // voxel grid, which is ample for deciding where to cut.
+   36: // Grid shape, for reporting. The resolution is FIXED on the longest axis;
+   37: // the other two scale with the model's proportions so voxels stay cubic, so
+   38: // the total count depends on the model's bounding box, not on the model.
+   49: // Voxel volume - the granularity of any answer above.
+   52: // True when the material inside the box forms ONE connected lump.
+   53: //
+   54: // A cut that severs a piece produces something nobody can print or joint -
+   55: // a "piece" made of a slice of thigh and a slice of tail with air between.
+   56: // Asking this before accepting a cut prevents that, where the alternative is
+   57: // detecting it after the Boolean and repairing it. Resolution-limited: a
+   58: // connection thinner than a voxel is not seen.
+   61: // Diagnostic: how many lumps, how big the largest is, and the total, so a
+   62: // "disconnected" verdict can be told from a single stray voxel.
+   69: // (n0+1)(n1+1)(n2+1) inclusive prefix sums
+   70: // n0*n1*n2 occupancy, for connectivity
+   72: // Voxel index range whose centres lie inside [lo, hi]; false when empty.
+
+======================================================================
+MeshData.cpp
+======================================================================
+   47: // Dedupe by packing the (lo,hi) index pair into one 64-bit key. Meshes
+   48: // past 4G vertices are not a case we need to handle.
+   67: // Polyline segments are appended verbatim: a curve's segments are real
+   68: // geometry, not shared triangle boundaries, so they must not be deduped
+   69: // away against them.
+
+======================================================================
+MeshData.h
+======================================================================
+   13: // 3 floats per vertex
+   14: // 3 indices per triangle
+   15: // 2 indices per edge (deduped tri edges + polylines)
+   16: // 3 floats per triangle, unit face normal
+   18: // Polyline/curve segments are collected here during parsing and merged
+   19: // into `edges` by buildEdges(). Kept apart so they survive dedup.
+   25: // "STL", "OBJ", "IRIT", "IGES", ...
+   26: // top-level IRIT objects seen
+   27: // freeform objects that had to be tessellated
+   28: // source polygons before triangulation
+   45: // dedupe triangle edges, then append polylineEdges
+
+======================================================================
+MeshDivider.cpp
+======================================================================
+   22: // Sutherland-Hodgman against one axis-aligned half-space. `keepAbove` keeps the
+   23: // side with coordinate >= val.
+   43: // pin exactly onto the plane,
+   44: // so cap detection can match
+   45: // on equality later
+   51: // Clips a triangle to a box. The result of clipping a convex polygon by planes
+   52: // is convex, so the caller can fan-triangulate it.
+   69: // ---------------------------------------------------------------- capping --
+   77: // Ear clipping of one planar loop, projected by dropping `axis`.
+  146: // Closes the cut faces of one clipped cell.
+  147: //
+  148: // The open boundary of the clipped shell only gives PART of each cut face's
+  149: // outline - the part where the model's own surface meets the plane. Where the
+  150: // solid runs all the way into a cell corner, the rest of the outline is the
+  151: // cell face's own border, and no triangle exists along it. So the loop is
+  152: // walked in two alternating modes: follow the shell's open edges while they
+  153: // last, then run along the face border until the next open edge starts.
+  154: //
+  155: // defined below
+  157: // Returns true if the piece is a closed solid afterwards. Attempting a face
+  158: // that had no hole is harmless - the walk simply finds nothing to do - so the
+  159: // only meaningful verdict is whether any open edge is left at the end.
+  163: // Directed boundary edges: an edge with no opposite-direction twin is on
+  164: // the open rim. The cap traverses it the other way round, the way the
+  165: // missing triangle would have.
+  170: // Each directed edge remembers the third vertex of the triangle it came
+  171: // from. That is what tells a genuine hole from a face the shell already
+  172: // covers: if the source triangle lies IN the cell face, the missing
+  173: // material is not on that face at all, and capping there would just
+  174: // duplicate the shell with the opposite winding.
+  184: // already reversed for the cap
+  192: // already closed
+  199: // 2D frame chosen so that counter-clockwise in (u, v) means the cap's
+  200: // normal points out of the cell.
+  210: // Vertex coordinates are stored as float, while the cell bounds are
+  211: // doubles. A padded bound like -1e-5 does not survive the round trip,
+  212: // so every "is it on this plane / border" test compares in float.
+  222: // A face with no model surface on it is either wholly outside the
+  223: // material or wholly inside it. Filling the "wholly inside" case by
+  224: // hand was tried and consistently over-filled on finer grids, so it is
+  225: // left alone: an honestly open piece beats invented material.
+  232: // Perimeter parameter, counter-clockwise from (u0, v0).
+  244: // The four corners, as vertices, created on demand.
+  265: // Which way the rim runs depends on the source mesh's winding, which we
+  266: // cannot assume - an inward-wound STL is still a perfectly good STL. So
+  267: // build the loops both ways and keep the one that comes out
+  268: // counter-clockwise, i.e. enclosing the material rather than the rest
+  269: // of the cell face. Going the wrong way round picks up the far corners
+  270: // and caps the complement of the piece.
+  273: // The rim direction is NOT a free choice - it is fixed by the source
+  274: // mesh's winding, since the cap traverses each open edge the opposite
+  275: // way from the triangle that owns it. Only the border closure has to
+  276: // be matched to it: an inward-wound mesh gives clockwise cap loops, so
+  277: // the run along the cell face border has to go clockwise as well, and
+  278: // the finished loop has negative area rather than positive.
+  312: // Run along the face border, the same way round as the
+  313: // rim, to the next vertex that matters.
+  329: // dead end away from the border
+  351: // Which way the rim runs is fixed by the source mesh's winding, which
+  352: // was measured once from its signed volume. Guessing per face does not
+  353: // work: the loop going the wrong way round encloses the leftover strip
+  354: // of the cell face, and that is a positively-wound region too.
+  369: // earClip always emits counter-clockwise in its own (axis+1,
+  370: // axis+2) frame, which faces +axis. The low face has to look the
+  371: // other way - and so does everything, if the source mesh is wound
+  372: // inward, because the cap has to agree with the shell it closes.
+  379: // Final verdict: is every edge now shared by two triangles?
+  395: // Six times the signed volume of a closed mesh. Positive means the triangles
+  396: // are wound counter-clockwise seen from outside - the usual convention. A file
+  397: // wound the other way is still perfectly valid, and the caps have to follow it.
+  412: // Ray cast from p along a deliberately skew direction, counting crossings of
+  413: // the model. An odd count means p is inside.
+  414: //
+  415: // This is what makes a fine division of a solid work at all: a cell buried in
+  416: // the middle of the material contains no surface triangles, so clipping alone
+  417: // yields nothing for it. Such a cell is not empty - it is completely full.
+  420: // Skew on purpose, so the ray is very unlikely to graze an edge or vertex.
+  436: // ray parallel to the triangle
+  458: // Emits a closed axis-aligned box, wound to match the source mesh.
+  467: // Each face as two triangles, wound counter-clockwise seen from outside.
+  469: // z = lo   (looking from -z)
+  470: // z = hi
+  471: // y = lo
+  472: // y = hi
+  473: // x = lo
+  474: // x = hi
+  489: // Splits triangles lying on a cell face until no edge is longer than `target`.
+  490: //
+  491: // This only matters for curved cuts: a cut face is created flat, and if it stays
+  492: // one big quad then un-warping just tilts that quad instead of bending it. Both
+  493: // triangles sharing an edge compute the same midpoint from the same two
+  494: // endpoints, and midpoints are welded, so no T-junctions appear.
+  519: // A triangle is on a cut face when all three of its vertices share one
+  520: // coordinate that equals a cell bound.
+  543: // Each pass quarters the offending triangles; six is far more resolution
+  544: // than any sane wave needs, and it bounds the growth.
+  571: // Evenly spaced interior cut positions for one axis.
+  578: // namespace
+  580: // ------------------------------------------------------------ spec builders --
+  596: // beyond 0.45 cuts can cross
+  660: // Triangle centroid and area along each axis, then cuts at equal-area
+  661: // quantiles. Where the model's material is unevenly spread, this is what
+  662: // stops one piece being nearly empty and its neighbour carrying everything.
+  708: // Any cut that landed on the boundary would make an empty slab.
+  719: // ------------------------------------------------------------------ divide --
+  731: // Ordered cell boundaries per axis, padded so nothing falls outside.
+  732: // No padding on the outer bounds. Clipping keeps points exactly on a plane,
+  733: // so the model's extremes survive - and a padded cell would leave a sliver
+  734: // of empty face beyond the material, which makes the cut outline ambiguous.
+  752: // Bucket each triangle into the cells its bbox overlaps, so each cell only
+  753: // clips the triangles that can possibly reach it.
+  783: // Winding is a property of the file, measured once.
+  836: // No surface crossed this cell. Either it is outside the
+  837: // model, or it is buried inside it and completely full.
+  855: // ---- cap the cuts ------------------------------------------
+  856: // A cut face has to be closed with new material, or the piece
+  857: // is a shell rather than a solid. capCell walks the open
+  858: // boundary and fills each cell face it lies on.
+  896: // ------------------------------------------------------------ curved cuts --
+  904: // Normalisation uses the ORIGINAL bounds, and unwarp() is handed the same
+  905: // ones, so the two maps are exact inverses.
+  941: // Positions moved, so bounds, normals and the edge list are all stale.
+  967: // Triangle bounds once, so each cell only clips what can reach it.
+  989: // BSP leaves have no grid position;
+  990: // the index is the identity
+ 1037: // No surface crossed this cell: it is either outside the model or
+ 1038: // buried inside it and completely full.
+ 1109: // The two failure modes are opposite ends of the same distribution, so both
+ 1110: // are corrected in the same loop: crumbs get absorbed, oversized pieces get
+ 1111: // split back down. Doing only one of them just moves the imbalance.
+ 1123: // How much MATERIAL a piece holds. Three metrics were tried and only
+ 1124: // the third works on a model like an armadillo:
+ 1125: //
+ 1126: //   longest side  - a sliver off a limb is long, so this misses it
+ 1127: //   bbox volume   - measures the REGION, not the material. A piece at
+ 1128: //                   the edge of the model can span a wide box and hold
+ 1129: //                   only a thin shell of surface inside it.
+ 1130: //   solid volume  - what is actually wanted, but only defined when the
+ 1131: //                   piece is watertight.
+ 1132: //
+ 1133: // So: use the true volume when every piece is closed, and fall back to
+ 1134: // bbox volume when they are not. One metric for the whole division
+ 1135: // either way - mixing them would make the median meaningless.
+ 1179: // measured: crumbs sit under
+ 1180: // this, real pieces above it
+ 1182: // --- absorb crumbs -------------------------------------------------
+ 1194: // ONLY when both children are leaves. Collapsing a parent whose
+ 1195: // sibling subtree was split further throws away every one of those
+ 1196: // cuts at once, which is how a single piece ends up being half the
+ 1197: // model. Merging exactly two adjacent cells is bounded; merging a
+ 1198: // whole subtree is not.
+ 1206: // --- split anything oversized --------------------------------------
+ 1217: // the spread is acceptable
+ 1219: // Absorbing raises the median too, so a greedy cascade could keep
+ 1220: // eating pieces that were never crumbs. The baseline is what the FIRST
+ 1221: // clip produced, not the target - cells landing outside the model
+ 1222: // already put the count below target.
+
+======================================================================
+MeshDivider.h
+======================================================================
+   26: // for PuzzlePiece
+   32: // interior cut positions, world coordinates
+   34: // hit the per-axis cell limit
+   42: // Equal slabs along each axis.
+   45: // Equal slabs, then each cut nudged by up to `jitter` of a slab width -
+   46: // Elber's difficulty randomisation, so no two pieces are interchangeable.
+   50: // Cuts placed so no cell exceeds `budget` on any axis, spaced EVENLY.
+   51: //
+   52: // Evenly is not a shortcut - it is the whole answer. In world space a size
+   53: // limit is satisfied by n = ceil(extent / limit) equal slabs, so there is
+   54: // nothing for the spacing to be non-uniform ABOUT. Unequal cuts on a mesh
+   55: // have to come from somewhere else: either imposed (jittered), or derived
+   56: // from a quantity that genuinely varies along the model, which surface area
+   57: // is not - a coarse box has all its area at a handful of face centres.
+   62: // Cuts placed so each slab holds roughly the same triangle area. On a model
+   63: // whose detail is unevenly distributed - a lattice, a part with one dense
+   64: // end - this is the division that actually balances the pieces, and it is
+   65: // the case uniform slabs handle worst.
+   68: // `cutDetail` is the longest edge a cut face is allowed to keep. Cut faces
+   69: // are subdivided below it so that un-warping bends them into a smooth
+   70: // curve rather than one flat facet. Pass 0 to skip subdivision entirely,
+   71: // which is what flat cuts want.
+   76: // Clips the model into an arbitrary list of boxes rather than a grid. This
+   77: // is what lets a recursive (BSP) split be used: the cells no longer line up
+   78: // in rows and columns, so there are no per-axis plane lists to describe
+   79: // them, but each one is still a box and clips exactly the same way.
+   84: // Recursive split + clip, with crumbs absorbed.
+   85: //
+   86: // The splitter's minimum bounds the CELL, which is not the same as bounding
+   87: // the PIECE: on an organic model a full-size cell can still clip down to a
+   88: // crumb at a claw tip or the end of a tail. So this clips, measures what
+   89: // came out, and collapses the parent of anything far smaller than the
+   90: // median piece - a cell and its BSP sibling merge back into the parent box
+   91: // exactly, so the division stays a partition of boxes throughout.
+   98: // Curved cuts, done by warping the model, cutting it flat, and un-warping
+   99: // the pieces. See CutWarp for why the map is always invertible.
+
+======================================================================
+MeshView.cpp
+======================================================================
+   12: // beyond this, edges are subsampled
+   17: // Distinct hues for adjacent pieces. Grid neighbours land on different entries
+   18: // because consecutive cells differ in k, so a face between two pieces is always
+   19: // a colour change - which is the whole point of looking at an exploded view.
+   27: // namespace
+   37: // ------------------------------------------------------------- geometry in --
+   81: // Colour by cell index rather than list position, so a piece keeps its
+   82: // colour when the grid changes size.
+   92: // Assigns each part its slice of m_proj and the direction it moves when the
+   93: // assembly is exploded: straight out from the centre of the whole set.
+  136: // Offset alone leaves pieces near the middle almost stationary - the
+  137: // inner ring of a cylinder, the core of a sphere. Adding a fixed step
+  138: // along the same direction guarantees every piece clears its
+  139: // neighbours while keeping the layout recognisably the original shape.
+  145: // Dead centre: no direction to push along, so fan it out using the
+  146: // part's position in the list purely to break the tie.
+  147: // golden angle
+  186: // ---------------------------------------------------------------- view set --
+  196: // Clamped so the model cannot be rolled past vertical and end up mirrored.
+  235: // -------------------------------------------------------------- projection --
+  271: // Exploding pushes pieces outward, so the set needs more room on screen.
+  288: // (x, y, z) is already centred and exploded.
+  291: // Yaw about Y, then pitch about X.
+  298: // screen Y grows downward
+  299: // larger z = nearer the viewer
+  365: // ------------------------------------------------------------- rasterising --
+  373: // Sized and cleared before the early-out: a curve-only file has no
+  374: // triangles, but the edge pass still depth-tests against this buffer.
+  378: // Rotate the face normal the same way the vertices were rotated, then use
+  379: // its view-space Z as a headlight term. abs() gives two-sided shading, so
+  380: // open surfaces (a lone trimmed patch, the cut face of a puzzle piece)
+  381: // stay lit from either side instead of going black.
+  402: // degenerate on screen - and NaN fails this too,
+  403: // which keeps a corrupt file out of the int casts
+  404: // below, where it would be undefined behaviour.
+  436: // Each weight comes from the edge opposite its vertex.
+  437: // Dividing by the *signed* area normalises the winding away,
+  438: // so "all three >= 0" means inside for front- and back-facing
+  439: // triangles alike - open surfaces stay solid, no culling.
+  457: // Draws the edge lists into the shaded frame with a depth test against the same
+  458: // z-buffer, so edges on hidden faces stay hidden. Without this the wireframe
+  459: // shows straight through the model - which makes an exploded assembly
+  460: // unreadable.
+  469: // Once there are more edges than roughly one per 8 pixels, every triangle
+  470: // is a couple of pixels across and the wireframe stops describing the
+  471: // surface - it just darkens it. Drop the overlay rather than render mush;
+  472: // the shading still shows the form, and unshaded mode still draws them all.
+  476: // Edges sit exactly on the triangles they bound, so they need a bias to
+  477: // win the depth comparison against their own faces.
+  480: // Two colours, picked per pixel: a dark line reads as a crease on top of a
+  481: // lit surface, but would be invisible against the background. Anything
+  482: // still at the z-buffer's clear value has no surface behind it - a
+  483: // silhouette edge, or a model made only of curves - and gets the light pen.
+  501: // nothing, or absurdly long
+  514: // behind a nearer surface
+  531: // ------------------------------------------------------------------- paint --
+  552: // Edges go into the same image so they can be depth-tested against the
+  553: // surface that was just drawn.
+  564: // Unshaded: a see-through wireframe with every edge visible. There is no
+  565: // depth buffer to test against here, and seeing the far side is the point.
+  589: // ------------------------------------------------------------ interaction --
+
+======================================================================
+MeshView.h
+======================================================================
+   36: // Bound from QML to the AppController context property; the view pulls
+   37: // fresh geometry whenever the controller reports some.
+   44: // Pins the camera to a given box instead of fitting it to whatever is
+   45: // currently loaded. Needed to render SUBSETS that must register with each
+   46: // other - one cage cell and the whole model have very different extents, so
+   47: // without this the two images would be at different scales and could not be
+   48: // overlaid.
+   52: // single part, no explode
+   56: // The colour a piece is painted in, and the ground behind everything.
+   57: // Exposed so figures drawn beside the view (PlannerFigure) colour a
+   58: // piece's graph node exactly like the piece itself.
+   62: // Where each piece's bounding-box centre lands on screen at size w x h,
+   63: // with the current camera and explode. Indexed like the vector given to
+   64: // setPieces(); a piece skipped for having no geometry gets valid[i] false.
+   67: // A unit world axis (0/1/2) as a screen direction, so an arrow drawn over
+   68: // a render points the way the piece actually moves.
+  105: // screen space, z toward viewer
+  107: // Everything the projection needs, worked out once per frame. Shared by
+  108: // the rasteriser and by pieceAnchors(), so labels land on their pieces.
+  117: // direction moved when exploding
+  119: // first index into m_proj
+  120: // index in setPieces(); -1 from setMesh
+  123: // bases, tints, push directions
+  125: // false when nothing to show
+  126: // yaw/pitch only
+  132: // all parts, concatenated
+  136: // union bbox, unexploded
+  147: // Off by default for the same reason the Edges checkbox is gone: with
+  148: // no control, the default is the only setting there is.
+
+======================================================================
+PieceExport.cpp
+======================================================================
+    3: // Qt before IRIT, deliberately. The IRIT headers define bare names that collide
+    4: // with Qt's - QDir fails to compile ("_mkdir already defined") when it is the
+    5: // other way round.
+   16: // IritMiscMatGenUnitMat
+   32: // The write runs inside IritGuard, so the context holds only POD - a longjmp
+   33: // out of an IRIT fatal error cannot unwind C++ destructors.
+   37: // Kind, as an int
+   48: // Indent 0: the file is for machines and for round-tripping, and an
+   49: // indented dump of a few hundred thousand vertices is enormous.
+   51: // this one reports failure by fatal error
+   55: // UniqueVertices merges the shared vertices a boolean leaves behind;
+   56: // without it a piece exports with duplicates on every cut face.
+   58: // no warning pop-ups
+   59: // triangulate convex polys
+   60: // unique vertices
+   69: // STL is written here rather than through IritPrsrSTLSaveFile, which has two
+   70: // behaviours that make it unusable for this:
+   71: //
+   72: //   * a binary STL cannot hold more than one named solid, so it silently
+   73: //     switches to one-file-per-object even when asked for a single file;
+   74: //   * it derives those file names by truncating the path at the FIRST '.' it
+   75: //     finds - strchr where strrchr was meant. Any dot earlier in the path (a
+   76: //     directory such as ".claude", or "v1.2") sends the output somewhere else
+   77: //     entirely. Saving to ...\tmp\export\pieces.stl wrote 1.stl..6.stl into
+   78: //     C:\Users\Admin instead.
+   79: //
+   80: // The format itself is 84 bytes of header plus 50 per triangle, so writing it
+   81: // directly costs less than working around either problem.
+  112: // Facet normal from the winding, normalised. A zero-area triangle
+  113: // gets a zero normal, which is what slicers expect to ignore.
+  139: // Writes one already-built IRIT object (a list of pieces, or a single piece) to
+  140: // `path` in the given format, under the guard.
+  164: // The per-piece file name for `index`, derived from the name the user chose.
+  165: // Built with QFileInfo rather than by hand so a dot elsewhere in the path is
+  166: // harmless - exactly what IRIT's own STL writer gets wrong.
+  177: // Moves each piece into its own cell of a grid on the XY plane, sitting on
+  178: // z = 0. Cells are sized by the largest piece and separated by a real gap, so
+  179: // no two pieces can touch however oddly shaped they are - which is the only
+  180: // thing a slicer will accept as "these are separate objects".
+  192: // A tenth of the larger cell side: visibly apart at any scale, without
+  193: // spreading the plate so wide that nothing fits on a bed.
+  201: // Align each piece's minimum corner to its cell origin: every piece
+  202: // then lies inside a cellW x cellD footprint, and consecutive cells are
+  203: // a full gap apart.
+  206: // rest it on the bed
+  218: // namespace
+  254: // Orient every piece up front. Consumers of all three formats - slicers
+  255: // included - read outward normals as "solid", so an inside-out piece would
+  256: // print as its own negative.
+  274: // Spread before anything is written, so every format and both file layouts
+  275: // see the same geometry.
+  283: // ---- one file per piece ---------------------------------------------
+  284: //
+  285: // Worth having for every format, not only STL. The pieces are written in
+  286: // MODEL coordinates - reassembled they occupy exactly the original model's
+  287: // space - so a single file looks like the undivided model in any viewer
+  288: // that merges groups on import. Separate files cannot be misread that way.
+  325: // ---- everything in one file -----------------------------------------
+  337: // One IRIT object per piece, gathered into a list, so the pieces stay
+  338: // distinguishable inside the file - an OBJ group, an ITD object.
+
+======================================================================
+PieceExport.h
+======================================================================
+   30: // pieces that made it into the file
+   31: // empty or unusable pieces
+   32: // what was actually written
+   38: // Writes `pieces` to `path`, picking the format from the extension.
+   39: //
+   40: // `separateFiles` writes one file per piece beside `path`, named
+   41: // <stem>_piece_000.<ext>, instead of a single file holding all of them.
+   42: //
+   43: // This matters for every format, not only STL. Pieces are written in MODEL
+   44: // coordinates, so reassembled they fill exactly the original model's space:
+   45: // a combined file looks like the undivided model in any viewer that merges
+   46: // groups on import, however correctly the pieces are named inside it.
+   47: // `spread` lays the pieces out side by side on the XY plane instead of
+   48: // leaving them where they belong in the model.
+   49: //
+   50: // Needed because slicers merge on import. A puzzle written in model
+   51: // coordinates has its pieces touching face to face - that is what a puzzle
+   52: // IS - and Bambu Studio, PrusaSlicer and Orca all read touching shells as
+   53: // one object, however the file names or groups them. Naming cannot fix
+   54: // that; only distance can. Each piece is moved into its own cell of a grid
+   55: // with a clear gap, and dropped onto z = 0 ready to print.
+   56: //
+   57: // It destroys the assembled positions, so it is for printing only - never
+   58: // for a file you intend to reassemble or measure.
+   63: // Extensions this can write, as Qt name filters, for the save dialog.
+   66: // True when `path`'s extension is one of them.
+
+======================================================================
+PlannerBlocking.cpp
+======================================================================
+   16: // ------------------------------------------------------- translational ------
+   40: // already removed: not in the way
+   41: // A neighbour sitting on this face stops the piece leaving through it.
+   64: // ------------------------------------------------------------ test only -----
+   83: // every direction
+   85: // no neighbours left: free
+  101: // ----------------------------------------------------------------- log ------
+  141: // namespace Planner
+
+======================================================================
+PlannerBlocking.h
+======================================================================
+   22: // A set of directions, one bit per Direction.
+   36: // One line stating what this model does not cover. Printed with every plan
+   37: // so a result is never read as stronger than the model behind it.
+   40: // Directions `piece` cannot move in, given that only `present` pieces are
+   41: // still in the assembly.
+   45: // For the log: which present pieces are responsible for blocking `dir`.
+   50: // ---------------------------------------------------------------------------
+   51: // The placeholder. Straight-line withdrawal, blocked only by face contact.
+   62: // ---------------------------------------------------------------------------
+   63: // TEST ONLY. Blocks every direction of any piece that still has a neighbour, so
+   64: // the NON-ASSEMBLABLE path in stage 3 can actually be exercised. The
+   65: // translational model above cannot produce that outcome on axis-aligned boxes -
+   66: // see the note in PlannerOrder.cpp - so without this the failure branch would
+   67: // never be run.
+   78: // Stage 2 log: for the first `maxPieces` pieces, which directions are blocked
+   79: // and by whom, with every piece still present.
+   83: // namespace Planner
+
+======================================================================
+PlannerFigure.cpp
+======================================================================
+   20: // ------------------------------------------------------------------ style --
+   21: //
+   22: // White ground and the same ink as the figures in docs/images, so these sit on
+   23: // a slide beside them without looking like a different document.
+   28: // the piece being moved
+   30: // X
+   31: // Y
+   32: // Z
+   38: // Non-ASCII punctuation by code point, so the source stays plain ASCII and no
+   39: // compiler code page can mangle it.
+   48: // what --cage --png uses
+   58: // "+X" / "-X" from the planner, with a real minus sign for slides.
+   81: // Title and a wrapped line of explanation. Returns where content starts.
+   96: // Lines stacked upward from the bottom edge.
+  146: // Screen direction of a planner direction, taken from the view's own camera so
+  147: // an arrow points the way the drawn piece would actually move.
+  154: // The exploded view on a white ground. MeshView paints its own dark ground;
+  155: // every pixel still exactly that colour afterwards is background, and is
+  156: // lifted to white so the image sits on a slide.
+  187: // ------------------------------------------------------ figure 1: pieces --
+  221: // ------------------------------------------- figure 2: adjacency graph --
+  256: // Legend, top right.
+  286: // -------------------------------------------------- figure 3: blocking --
+  372: // ------------------------------------------- figure 4: removal order --
+  391: // The assembly sentence is measured first so the footer is sized to it.
+  423: // One layout shared by every panel, so a piece sits in the same place in
+  424: // each - the eye follows what changes, not where things moved.
+  439: // nodeRoom keeps the lowest node's radius clear of the caption - without
+  440: // it the bottom piece was drawn on top of its own step text.
+  466: // Contacts between pieces still in the puzzle.
+  503: // Which ways were open to it at this moment, before it leaves.
+  557: // namespace
+  559: // -------------------------------------------------------------- the API --
+  608: // One view renders the pieces and supplies the camera, so node positions,
+  609: // colours and arrow directions all come from what is actually drawn.
+
+======================================================================
+PlannerFigure.h
+======================================================================
+   33: // where the images actually went
+   34: // full paths, in presentation order
+   35: // empty when everything was written
+   38: // Writes the four figures into `folder`, creating it if needed. If it cannot be
+   39: // created - a model opened from a read-only location - the images go to
+   40: // Pictures/PuzzleDivider/<title>_planner instead, and `problems` says so.
+   41: // `title` names the model in the first figure's heading.
+   49: // <model folder>/<model name>_planner - beside the model, so each model's
+   50: // figures are found next to it. Empty if `modelPath` is.
+   53: // namespace PlannerFigure
+
+======================================================================
+PlannerGraph.cpp
+======================================================================
+   28: // The low-side piece has its neighbour in the +axis direction, and the
+   29: // high-side piece has it in -axis.
+   50: // The pairing is the divider's. Re-deriving it here would be a second
+   51: // opinion on the same question, and the two could drift apart.
+   62: // Which one is on the low side of the shared plane. Comparing the far
+   63: // faces rather than the near ones: two boxes that meet on a plane have
+   64: // one's hi equal to the other's lo, and it is that pairing that names
+   65: // the sides.
+   72: // The contact rectangle, on the two axes that are not the normal.
+   84: // a sliver, not a face worth planning on
+  139: // namespace Planner
+
+======================================================================
+PlannerGraph.h
+======================================================================
+   25: // The six axis directions, in one fixed order the whole planner shares.
+   28: // 0 = x, 1 = y, 2 = z
+   40: // One real face contact.
+   41: //
+   42: // `lowSide` is the piece on the smaller side of the shared plane. So from
+   43: // lowSide the neighbour lies along +axis, and from highSide along -axis. That
+   44: // orientation is the whole content of the edge as far as stage 2 is concerned.
+   48: // 0/1/2 - normal of the shared face
+   49: // where the shared face sits along `axis`
+   50: // overlap area on that plane
+   51: // its two side lengths, on the non-normal axes
+   52: // thinnest of the two pieces along `axis`
+   59: // per node: indices into `contacts`
+   64: // Which way the neighbour lies, seen from `piece`.
+   66: // The piece on the other end of the contact.
+   69: // Stage 1 log: every piece, its neighbours, and the direction each is in.
+   73: // `minArea` drops contacts whose overlap is real but negligible - a sliver left
+   74: // by a BSP cut that would otherwise be treated as a full face. Zero keeps
+   75: // everything adjacencyOfBoxes returned.
+   79: // namespace Planner
+
+======================================================================
+PlannerJoints.cpp
+======================================================================
+   29: // Start from the six directions being allowed, and take them away.
+   35: // gone: neither face nor peg matters
+   38: // the face itself is in the way
+   41: // Mated peg: the only motion it permits is straight back out along
+   42: // its own axis. Everything else goes.
+   65: // Responsible for `dir` either because it is the face being pushed
+   66: // into, or because its peg forbids everything but its own way out.
+   74: // --------------------------------------------------------------- choosing ---
+   87: // When each piece comes off, and which way it goes.
+  103: // The one that leaves first is the one that has to pull a peg.
+  122: // ------------------------------------------------------------------- log ----
+  194: // namespace Planner
+
+======================================================================
+PlannerJoints.h
+======================================================================
+   20: // Which contacts carry a joint, indexed by contact index in the Graph.
+   38: // A joint on every contact - what the divider currently produces.
+   41: // Joints chosen so they cannot break `plan`: a contact carries one only when
+   42: // the piece that comes off FIRST leaves straight along that contact's normal,
+   43: // away from its mate.
+   44: //
+   45: // That single rule is enough. A piece has one removal direction, so every joint
+   46: // it is still mated to when its turn comes lies on the same axis and the same
+   47: // side - pulling the piece out IS pulling those pegs out. Joints on its other
+   48: // faces belong to neighbours that have already gone, and a joint whose mate is
+   49: // absent constrains nothing.
+   56: // Why a jointed puzzle is stuck, in terms a person can act on: which pieces
+   57: // carry mated joints on more than one axis.
+   61: // namespace Planner
+
+======================================================================
+PlannerOrder.cpp
+======================================================================
+    5: // A note on what the search does and does not settle.
+    6: //
+    7: // The loop is greedy and monotone: at each step it takes the first piece that
+    8: // has a free direction, and never reconsiders. Two consequences worth being
+    9: // straight about.
+   10: //
+   11: //   * Success is a genuine witness. The order it returns is a real removal
+   12: //     sequence under the model that was passed in - each step was checked
+   13: //     against the pieces still present at that moment.
+   14: //   * Failure is NOT a proof of non-assemblability in general. It says this
+   15: //     greedy descent got stuck; a different choice earlier might not have. It
+   16: //     also only covers MONOTONE sequences, where a piece goes straight out and
+   17: //     never moves again, and only ONE piece at a time - a puzzle needing two
+   18: //     sub-assemblies mated together is outside the model.
+   19: //
+   20: // So the log reports "no piece is removable" as a fact about this run, not as a
+   21: // theorem about the puzzle.
+   22: //
+   23: // Separately, and worth knowing before reading any result: for AXIS-ALIGNED
+   24: // boxes the translational model can never reach that failure. The piece with
+   25: // the largest hi[x] cannot have a neighbour on its +X face, because such a
+   26: // neighbour would need a larger hi[x] still. So at every step at least one
+   27: // piece is free, and the greedy loop always completes. A non-assemblable answer
+   28: // from stages 1-3 as they stand would mean a bug, not a hard puzzle. The
+   29: // failure branch is exercised by AlwaysBlocking, and will start doing real work
+   30: // when the swept-volume model replaces the placeholder.
+   81: // Assembly is the removal sequence played backwards, each piece going in
+   82: // the way it came out.
+  162: // namespace Planner
+
+======================================================================
+PlannerOrder.h
+======================================================================
+   21: // for `removal`: the way it came off
+   22: // for `assembly`: the way it goes in (the opposite)
+   26: // disassembly, first piece off first
+   27: // reverse of `removal`, directions flipped
+   28: // pieces still present when it gave up
+   37: // Greedy monotone removal, no backtracking. See the note at the top of the .cpp
+   38: // about what a failure here does and does not prove.
+   41: // Checks an order that was found under one model against another - the honest
+   42: // way to test a change (adding joints, swapping in the real collision check)
+   43: // without letting the search quietly pick a different order to suit itself.
+   44: // Returns the index of the first step that does not hold, or -1 if all do.
+   48: // namespace Planner
+
+======================================================================
+PuzzleDivider.cpp
+======================================================================
+    5: // brings in the IRIT C headers
+   23: // ------------------------------------------------------------ split makers --
+   27: // Domain bounds for one axis.
+   36: // Evaluates M at a parameter point with `axis` set to t and the other two axes
+   37: // held at the given fractions of their domains.
+   53: // namespace
+   74: // beyond 0.45 splits can cross
+   97: // Ordered cell boundaries per axis: domain start, interior splits, domain end.
+  114: // Largest physical span any single cell reaches along each PARAMETER axis.
+  115: //
+  116: // Measuring the cell's world-axis bounding box instead was wrong: for anything
+  117: // but a box, world X picks up contributions from u, v and w at once, so an
+  118: // overshoot could never be attributed to the axis that caused it. Here each
+  119: // cell is measured along its own u, v and w edges, which is the quantity the
+  120: // cut spacing on that axis actually controls.
+  138: // The cell's four edges parallel to axis `a`. Straight-line
+  139: // distance, not arc: what has to fit on a print bed is the
+  140: // piece's actual extent, and a curved edge measures shorter
+  141: // corner to corner than along its length.
+  152: // scalar trivariate
+  166: // namespace
+  172: // Cuts are placed by arc length, the resulting cells are measured, and the
+  173: // budget is tightened where they came out too big.
+  174: //
+  175: // Each axis is tightened SEPARATELY. A single shared factor meant that one
+  176: // overshooting axis dragged the other two down with it, subdividing axes
+  177: // that were already comfortably inside the limit - which is exactly what
+  178: // makes a "roughly equal size" division come out with a 2x spread and far
+  179: // more pieces than asked for.
+  184: // Landing 0.02% over a limit is a hit, not a miss. Without a tolerance the
+  185: // loop runs every pass, shrinks the budget each time, and still reports
+  186: // failure.
+  196: // nothing measurable; keep the guess
+  210: // only the axis that overshot
+  239: // Nine sample lines per axis: the centre plus corner-ish positions of the
+  240: // other two parameters. A cell's physical size varies across the domain
+  241: // when M is non-isometric, so measuring only the centre line would
+  242: // undershoot near the boundary.
+  252: // Pass 1: cumulative physical length along the axis, sampled densely.
+  278: // scalar trivariate: nothing to measure
+  291: // Pass 2: how many cells the budget asks for, then splits placed at
+  292: // equal *physical* increments. Walking the whole axis first and
+  293: // dividing after is what keeps the last cell from swallowing the rest
+  294: // of the domain when the cap bites.
+  299: // budget cannot be met within the cap
+  317: // ------------------------------------------------------------------ divide --
+  321: // Region extraction can raise an IRIT fatal error, so it runs inside the guard
+  322: // and touches only POD.
+  337: // Cut one axis at a time; each call narrows the box a little further.
+  354: // namespace
+  398: // BSP cells have no grid position. The index is kept in i so a piece
+  399: // can still be named in a log; j and k stay 0 rather than pretending
+  400: // to be coordinates.
+  449: // Full ordered boundary list per axis: domain start, interior splits, end.
+  481: // A zero-width cell would make region extraction meaningless.
+  500: // Tessellate through the same path a whole file takes, so a
+  501: // piece and the original model are rendered identically.
+  530: // Example: If you want to save sub-regions based on your PuzzlePiece parameter boxes (p0 and p1):
+  531: // You can loop through pieces, extract their subRegion, and save them.
+  532: // Or if you just want to save the master trivariate:
+  550: // Index cells by (i,j,k) so a missing cell simply has no edges.
+  561: // Only step forward on each axis, so every pair is reported once.
+  575: // ------------------------------------------------------------- BSP cells --
+  580: // How a cut is chosen.
+  581: //
+  582: // The old rule accepted any plane leaving each side between 15% and 85% of the
+  583: // material. That is a threshold nobody can defend - 60/70 is just as arguable -
+  584: // and inside the window the position came from a random draw, so the piece
+  585: // shapes were decided by the seed rather than by the model.
+  586: //
+  587: // This replaces it with a cost that is MINIMISED. The balance term's optimum is
+  588: // an even split, worked out per cell from the material actually there, so there
+  589: // is no ratio to justify: the answer to "why not 60/70?" is that no ratio is
+  590: // chosen at all.
+  591: //
+  592: // The terms are summed with weights so more can be added without disturbing
+  593: // what works. Only balance is live; the rest are named, weighted 0, and
+  594: // deliberately not implemented yet.
+  596: // live
+  597: // STUB - penalise cuts through a thin neck
+  598: // STUB - penalise cuts that sever a piece
+  602: // |left - right| / cellMaterial, in [0, 1]
+  603: // STUB - always 0 for now
+  604: // STUB - always 0 for now
+  615: // cut position as a fraction of the cell's extent
+  620: // Set BSP_LOG=1 to print every candidate and the one chosen.
+  628: // namespace
+  648: // Automatic floor: a fraction of the side of an average piece. Scales with
+  649: // the model and with how many pieces were asked for, so it needs no units
+  650: // and no tuning when either changes.
+  660: // How many planes are scored per axis. Enough that the sampled minimum sits
+  661: // within a fraction of a percent of the true one, cheap enough not to
+  662: // matter: each candidate is a handful of prefix-sum lookups.
+  664: // balance live, the rest stubbed at 0
+  666: // node indices that are currently leaves
+  667: // no axis long enough to cut
+  672: // Pick a leaf in proportion to its volume, ignoring ones already known
+  673: // to be uncuttable. Splitting uniformly at random would keep
+  674: // re-splitting whatever is already smallest and end up with a cloud of
+  675: // slivers next to one big block.
+  687: // nothing left that can be cut
+  689: // Always split whichever leaf holds the MOST, rather than sampling in
+  690: // proportion to it. Sampling lets the biggest cell simply never come up
+  691: // again: on the armadillo at 6 pieces one piece kept 80% of the model
+  692: // because five of the cuts landed elsewhere. Splitting the largest every
+  693: // time bounds that - a piece can only stay large if it was large one cut
+  694: // ago, and it will be chosen again. The irregularity the puzzle needs
+  695: // comes from WHERE each cut falls - the cost minimum below, which
+  696: // follows the model - not from which cell is chosen.
+  707: // Try the axes longest first. Cutting the longest keeps pieces blocky;
+  708: // falling through to a shorter one is what lets a cell that is already
+  709: // thin in its longest direction still be divided.
+  716: // Pass 0 demands that both halves stay connected; pass 1 drops that if
+  717: // no axis could manage it. Relaxing rather than giving up keeps the
+  718: // piece count honest - a severed piece is repaired downstream, whereas a
+  719: // missing one cannot be.
+  726: // Both halves have to clear the floor, so the cut fraction is
+  727: // confined to [minSide/extent, 1 - minSide/extent]. If the jitter
+  728: // range does not reach that window the axis is unusable; if the
+  729: // window itself is empty the cell is too short to halve at all.
+  733: // The only bound on where a plane may fall is minSide, which is a
+  734: // PRINTABILITY limit on the cell. The old jitter window
+  735: // [0.5-j, 0.5+j] is deliberately not applied to the material path:
+  736: // it was the same arbitrary 15-85% threshold expressed as a
+  737: // position, and it would have quietly bounded the search.
+  749: // "Nearly nothing", not a ratio. A half holding less than a few
+  750: // voxels is degenerate geometry rather than a small piece, and
+  751: // this is the only material threshold left in the splitter.
+  754: // not enough here to make two pieces
+  756: // Sample candidate planes across the whole admissible span. The
+  757: // span is bounded by minSide, which is a PRINTABILITY limit on
+  758: // the cell, not a material ratio.
+  769: // would make an empty or sliver cell
+  780: // no usable plane on this axis
+  797: // Take the cheapest candidate that also survives the pass-0
+  798: // connectivity test, rather than taking the cheapest and then
+  799: // rejecting the whole axis if it happens to sever a piece.
+  815: // every plane here would sever a piece
+  839: // the parent stops being a leaf
+  847: // too small on every axis
+  891: // Longest axis first, falling through to shorter ones - the same rule the
+  892: // initial build uses, so a re-split is indistinguishable from an original.
+  932: // The subtree stays in the array but becomes unreachable, which is fine -
+  933: // leavesOf only ever walks down from the root.
+  956: // BSP cells have no grid indices to step through, so neighbours are found
+  957: // geometrically: two boxes meet on a plane and their footprints there
+  958: // overlap with real area. Touching only along an edge or at a corner is not
+  959: // a shared face and must not become a joint.
+  981: // one shared face is enough
+
+======================================================================
+PuzzleDivider.h
+======================================================================
+   22: // cell index within the grid
+   23: // parameter box corner (u, v, w)
+   24: // opposite parameter corner
+   25: // tessellated boundary of the piece
+   26: // physical bbox centre, used to explode
+   27: // physical bbox extent, vs build volume
+   32: // Interior split parameters per axis, in domain coordinates, strictly between
+   33: // the domain bounds and sorted ascending. Empty means "do not cut this axis".
+   36: // how it was built, for the UI
+   37: // hit the per-axis cell limit, so the
+   38: // size budget could not be honoured
+   44: // One leaf of a recursive split: an axis-aligned box, in parameter space for a
+   45: // trivariate or world space for a mesh. Still a box, so region extraction and
+   46: // box clipping both work on it unchanged.
+   59: // Recursive (BSP) split into `targetPieces` boxes.
+   60: //
+   61: // This is the division that global cut planes cannot express. Planes run
+   62: // the whole way through the model, so piece sizes are locked to rows and
+   63: // columns and every interior piece has exactly six neighbours. Splitting
+   64: // one cell at a time frees the sizes from each other and makes the
+   65: // adjacency irregular - a big piece can border several small ones - which
+   66: // is what a puzzle actually looks like.
+   67: //
+   68: // Cells are chosen for splitting in proportion to their volume and cut on
+   69: // their longest axis, near the middle, so the pieces stay blocky instead of
+   70: // degenerating into slivers.
+   71: // `minSide` is the shortest a cell is allowed to get on any axis. A cell is
+   72: // only cut where BOTH halves stay above it, and a cell with no axis long
+   73: // enough to cut that way is left alone - so the split can finish below the
+   74: // target rather than manufacture slivers nobody can print or handle.
+   75: //
+   76: // Pass 0 for automatic: 0.45 of the side of an average piece, which scales
+   77: // with both the model and the requested count.
+   78: // `material`, when given, makes the split MODEL-AWARE: cells are chosen and
+   79: // cut by how much of the model they contain rather than by how big their box
+   80: // is. That is what stops the splitter putting a cell in thin air.
+   81: //
+   82: // The guarantee it buys is worth stating exactly. The root cell holds all
+   83: // the material, and a cut is only accepted when BOTH halves keep some, so by
+   84: // induction every leaf holds material. No empty cells means none get dropped
+   85: // later, so the piece count comes out as asked. Without it, a cage that is
+   86: // 90% air - an armadillo's is - reliably loses a piece or two.
+   92: // The same split, kept as a TREE rather than flattened to leaves.
+   93: //
+   94: // Worth keeping because of what it makes possible afterwards: a cell and
+   95: // its sibling always merge back into their parent box EXACTLY, so a piece
+   96: // that turns out to hold almost no material can be absorbed by collapsing
+   97: // its parent. Two arbitrary adjacent cells have no such box, which is why
+   98: // the tree has to survive the split rather than being discarded.
+  101: // both -1 = leaf
+  111: // Leaf node indices, in traversal order. `boxes` receives the matching
+  112: // cells, so leaf i of the division is tree node leafIndex[i].
+  116: // Turns `node` back into a leaf, discarding its subtree. Its box already
+  117: // covers exactly what its descendants covered, so the division stays a
+  118: // partition - it just has one fewer, larger piece there.
+  121: // Splits one leaf in place, same rules as the initial build: longest axis
+  122: // first, near the middle, both halves clearing `minSide`. Returns false if
+  123: // the cell is too small to cut on any axis.
+  124: //
+  125: // This is what balances the division. Absorbing crumbs merges cells and can
+  126: // leave a piece far bigger than the rest; splitting the oversized ones back
+  127: // down is the other half of the same job.
+  132: // Face-sharing pairs among arbitrary boxes: they meet on a plane and their
+  133: // footprints overlap there with real area. Needed because BSP cells have no
+  134: // i/j/k to step through.
+  139: // Evenly spaced splits: counts[a] cells along axis a.
+  142: // Evenly spaced, then each interior split nudged by up to `jitter` of a
+  143: // cell width. This is Elber's difficulty randomisation - pieces stop being
+  144: // interchangeable once they are all different sizes.
+  148: // Splits placed so that no cell exceeds `budget` millimetres on any axis.
+  149: // Because M is generally not isometric, equal parameter steps do NOT give
+  150: // equal physical sizes - so this walks the trivariate and places each split
+  151: // where the accumulated physical extent reaches the budget. That is where
+  152: // the non-uniform division earns its keep: sizing pieces to a build volume.
+  156: // The first half of toBuildVolume: splits placed at equal physical arc
+  157: // length along each parameter axis. Exposed because it is the honest,
+  158: // cheap answer when the caller does not need the world-bbox guarantee.
+  163: // Extracts every cell. `fineNess` follows IRIT's tessellation convention.
+  164: // Divide into an arbitrary set of parameter-space boxes, rather than the
+  165: // grid a DivisionSpec describes.
+  166: //
+  167: // A DivisionSpec is three lists of cut planes, so it can only ever produce
+  168: // nu x nv x nw cells - asking it for 2 pieces gets you 2x2x2 = 8. The BSP
+  169: // cells from buildBspCells are not a grid at all, and this is what puts
+  170: // them through the same region extraction, so a requested piece count is
+  171: // honoured exactly and the adjacency comes out irregular.
+  180: // Face-sharing pairs, in grid order. The joint planner will run its
+  181: // spanning tree over exactly this graph: one helical joint per tree edge,
+  182: // a dovetail on every remaining (loop-closing) edge.
+
+======================================================================
+Trivariate.cpp
+======================================================================
+    3: // brings in the IRIT C headers
+   13: // --------------------------------------------------------------- lifetime --
+   52: // ---------------------------------------------------------------- queries --
+   83: // scalar field: no position to read
+  100: // IritPrsrGenTRIVARObject takes ownership of what it is handed, and
+  101: // IritMesh::tessellate then consumes the object - so hand over a copy and
+  102: // keep ours.
+  120: // ---------------------------------------------------------------- sources --
+  132: // index into primitiveKinds()
+  175: // Depth-limited search for the first trivariate with real (>= 3D) geometry.
+  211: // namespace
+  243: // A zero-thickness axis (a flat plate, a planar sketch) would make a
+  244: // degenerate trivariate, so give it a sliver of the diagonal.
+
+======================================================================
+Trivariate.h
+======================================================================
+   36: // --- sources ---------------------------------------------------------
+   43: // Wraps a raw TrivTVStruct*, taking ownership. Used by PuzzleDivider for
+   44: // the sub-trivariates it extracts.
+   47: // --- queries ---------------------------------------------------------
+   51: // Parameter domain as { uMin, uMax, vMin, vMax, wMin, wMax }.
+   54: // Orders (degree + 1) along u, v, w - a piece cannot be finer than these.
+   57: // Tessellates the boundary into `out`. `fineNess` follows IRIT's
+   58: // convention (20 is its default; higher means more polygons).
+   61: // Physical position of one parameter point. Returns false if the trivariate
+   62: // is scalar (E1), which has no position to evaluate.
+   65: // TrivTVStruct *
+   66: // Saves this trivariate natively to an .itd file
+   69: // Extracts a sub-region trivariate given parameter bounds

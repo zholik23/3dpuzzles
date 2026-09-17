@@ -1,3 +1,8 @@
+//
+// PlannerGraph - implementation: builds the contact list from the pieces' boxes
+// and answers the side and direction queries the later stages make.
+//
+
 #include "PlannerGraph.h"
 
 #include <cmath>
@@ -25,8 +30,6 @@ int Graph::directionFrom(int contactIndex, int piece) const
     if (contactIndex < 0 || contactIndex >= contacts.size())
         return -1;
     const Contact &c = contacts[contactIndex];
-    // The low-side piece has its neighbour in the +axis direction, and the
-    // high-side piece has it in -axis.
     if (piece == c.lowSide)  return c.axis * 2 + 0;
     if (piece == c.highSide) return c.axis * 2 + 1;
     return -1;
@@ -47,8 +50,6 @@ Graph build(const QVector<PuzzlePiece> &pieces, double eps, double minArea)
     }
     g.incident.resize(pieces.size());
 
-    // The pairing is the divider's. Re-deriving it here would be a second
-    // opinion on the same question, and the two could drift apart.
     const QVector<PuzzleDivider::Neighbours> links =
         PuzzleDivider::adjacencyOfBoxes(pieces, eps);
 
@@ -59,17 +60,12 @@ Graph build(const QVector<PuzzlePiece> &pieces, double eps, double minArea)
         if (axis < 0 || axis > 2)
             continue;
 
-        // Which one is on the low side of the shared plane. Comparing the far
-        // faces rather than the near ones: two boxes that meet on a plane have
-        // one's hi equal to the other's lo, and it is that pairing that names
-        // the sides.
         int lo = l.a, hi = l.b;
         if (std::fabs(pieces[hi].p1[axis] - pieces[lo].p0[axis]) <= eps)
             qSwap(lo, hi);
 
         const PuzzlePiece &A = pieces[lo], &B = pieces[hi];
 
-        // The contact rectangle, on the two axes that are not the normal.
         double extent[2] = { 0.0, 0.0 };
         int    k = 0;
         for (int b = 0; b < 3; ++b) {
@@ -81,7 +77,7 @@ Graph build(const QVector<PuzzlePiece> &pieces, double eps, double minArea)
         }
         const double area = extent[0] * extent[1];
         if (area <= minArea)
-            continue;               // a sliver, not a face worth planning on
+            continue;
 
         Contact c;
         c.lowSide  = lo;
@@ -136,4 +132,4 @@ QStringList Graph::describe(int maxPieces) const
     return out;
 }
 
-} // namespace Planner
+}

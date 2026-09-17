@@ -137,6 +137,7 @@
     <ClCompile Include="PlannerGraph.cpp" />
     <ClCompile Include="PlannerJoints.cpp" />
     <ClCompile Include="PlannerFigure.cpp" />
+    <ClCompile Include="DivisionReport.cpp" />
     <ClCompile Include="PlannerOrder.cpp" />
     <ClCompile Include="PuzzleDivider.cpp" />
     <ClCompile Include="Trivariate.cpp" />
@@ -161,6 +162,7 @@
     <ClInclude Include="PlannerGraph.h" />
     <ClInclude Include="PlannerJoints.h" />
     <ClInclude Include="PlannerFigure.h" />
+    <ClInclude Include="DivisionReport.h" />
     <ClInclude Include="PlannerOrder.h" />
     <ClInclude Include="PuzzleDivider.h" />
     <ClInclude Include="Trivariate.h" />

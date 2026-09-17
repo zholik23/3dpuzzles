@@ -1262,6 +1262,34 @@ Figures 3 and 4 carry `AssemblyOrder::caveat()`, and figure 4 also states that a
 box partition always has a free piece — so a picture cannot be quoted as more
 than the translational model behind it.
 
+### The division report — `DivisionReport`
+
+Beside those four pictures, every division also writes **`report.html`**: one
+self-contained page recording what was divided, what came out, how long each
+stage took, and what the planner concluded. The *Open report* button over the
+3D view opens it; `AppController::reportUrl` is the path.
+
+| Section of the page | What it holds |
+|---|---|
+| The model | vertices, triangles, bounding box, **watertight yes/no**, volume by divergence, and — when a voxel field was built — volume by voxel fill, with the note that the two disagreeing is a fact about the model |
+| The division | mode, whether the cage or the mesh was cut, pieces asked for against cells produced, seed, the voxel grid and its fill, the trim result, the joint note, any warning |
+| Time | voxelise, choose the cuts, extract, trim, joints, draw the pictures, total — a stage that did not run prints `—`, never a blank |
+| The pieces | count, triangles, largest/smallest side and the spread, total volume as a **percentage of the model**, then a row per piece: size, triangles, volume, share, closed or not |
+| The planner | shared faces, neighbours per piece, whether an order was found, the assembly order, any stuck pieces, and `AssemblyOrder::caveat()` |
+| The pictures | all four figures inline, each captioned |
+
+Three rules keep it honest, and they are worth knowing before quoting it:
+
+- **The volume check is labelled, not just printed.** Summed piece volume is only
+  meaningful when the model and every piece are closed; when they are not, the
+  page says so instead of showing a percentage as if it meant something. The
+  divergence integral over an open shell is not a volume.
+- **Nothing is estimated.** Only stages that ran report a time.
+- **It is written after the joints are cut** (`AppController::writeDivisionReport`,
+  `AppController.cpp:922`), not with the pictures, because the joints stage
+  happens later and its time and note belong in the page. `describePieces()`
+  calls it, which every division path reaches.
+
 ### `AssemblyPlanner` — the earlier, standalone planner
 
 A different structure, kept because it is where the rotation finding came from:
@@ -1458,7 +1486,8 @@ Top row: Open model… · Save pieces… · Spread apart (for slicing) · Shaded
 Reset view · Bounding cage · Back to model.
 Middle: Mode selector, the mode's inputs, New layout, Divide.
 Over the view, once a division has written its planner pictures: tabs
-*3D view · Pieces · Graph · Blocking · Order* and an *Open folder* button.
+*3D view · Pieces · Graph · Blocking · Order*, an *Open report* button for the
+written analysis, and an *Open folder* button.
 Bottom: status, division info (piece counts, shared faces, sizes, and the
 planner-figures folder), an Explode slider, detail text. Two
 explanatory captions — "Dividing the trivariate…" and the per-mode hints — were
@@ -1559,9 +1588,10 @@ substantiates it, and how it was verified.
 | Spiral (rotate-to-engage) joints | **not built** — and the measurement in §21 says the obvious form will not work |
 | Simulated annealing over layouts | **not built.** Proposed; slide deck exists |
 | Export to .itd / .obj / .stl | **working** |
+| Division report (`report.html` per division) | **working**, written after the joints so their time and note are included; takes effect after the next rebuild |
 | Planner figures (four PNGs per division, shown in tabs over the 3D view) | **working** on cage divisions, checked on the armadillo run; the in-app tabs, figures for mesh divisions and a caption-overlap fix take effect after the next rebuild |
 | BSP division inside GuIrit (`GuIritDllBspPuzzle_64.dll`) | **built and installed**; the model-orientation fix for trimmed pieces awaits a run to confirm — see [`BSP_IN_IRIT_AND_GUIRIT.md`](BSP_IN_IRIT_AND_GUIRIT.md) |
-| `PUZBSP` IRIT script command | **blocked** — the interpreter edits compile, but `Irit64.dll` cannot be relinked while `geom_lib/ogl_depth_peel.c` is stubbed (since 2026-05-29) |
+| `PUZBSP` IRIT script command | **working in `irit64.exe`** — cube into 8 gives 8 pieces at 100.0% volume; `GuIrit64.exe` still to be relinked so GuIrit's interpreter has it too |
 | `AssemblyDivider` Stage B / C | **not built** |
 
 ---
@@ -1686,7 +1716,8 @@ Everything compiled into the app, in dependency order.
 | `PlannerOrder.h/.cpp` | 48 / 162 | stage 3 — greedy monotone order extraction + replay |
 | `PlannerJoints.h/.cpp` | 61 / 194 | stage 4 — joints chosen to fit the order |
 | `AssemblyOrder.h/.cpp` | 89 / 230 | the front door: run the three stages, report, count phantoms |
-| `PlannerFigure.h/.cpp` | 53 / 633 | pictures of the planner's three stages for slides, written after each cage division |
+| `PlannerFigure.h/.cpp` | 53 / 633 | pictures of the planner's three stages, written after every division |
+| `DivisionReport.h/.cpp` | 81 / 359 | `report.html` beside the pictures: model facts, timings, every piece, the planner's verdict |
 | `AssemblyPlanner.h/.cpp` | 79 / 272 | spanning-tree spiral/dovetail planner + rotation sweep |
 | `AssemblyDivider/AssemblyDivider.h/.cpp` | 80 / 196 | Stage A: split to target + signed contact graph |
 | `IritJoint.h/.cpp` | 136 / 477 | Elber's pin and hole, cut in by boolean |
@@ -1704,6 +1735,7 @@ Related documents in `docs/`:
 | [`CAGE_AND_BSP.md`](CAGE_AND_BSP.md) | the cage and the BSP specifically |
 | [`ASSEMBLY_PLANNER_GUIDE.md`](ASSEMBLY_PLANNER_GUIDE.md) | the planner, how to build and extend it |
 | [`BSP_IN_IRIT_AND_GUIRIT.md`](BSP_IN_IRIT_AND_GUIRIT.md) | moving the BSP division into IRIT: a GuIrit panel, an IRIT built-in, or both |
+| [`BSP_IN_IRIT_WHAT_CHANGED.md`](BSP_IN_IRIT_WHAT_CHANGED.md) | what was actually changed in `C:\irit` on 2026-09-15: files, builds, fixes, the blocker, and how to undo it |
 | `images/voxel_simple_*.png` | three plain figures for a talk: the 1D idea, why, and when |
 | `images/voxel_{column,prefix,query}.png` | the detailed voxel mechanics |
 | `figures/*.py` | the generators; they assert their own arithmetic |

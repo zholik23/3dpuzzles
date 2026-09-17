@@ -1,3 +1,8 @@
+//
+// PlannerFigure - implementation: renders the pieces once, then paints the four
+// figures over that render with QPainter.
+//
+
 #include "PlannerFigure.h"
 
 #include "AssemblyOrder.h"
@@ -17,26 +22,19 @@
 
 namespace {
 
-// ------------------------------------------------------------------ style --
-//
-// White ground and the same ink as the figures in docs/images, so these sit on
-// a slide beside them without looking like a different document.
-
 const QColor kInk      (0x14, 0x1a, 0x20);
 const QColor kInkSoft  (0x5c, 0x68, 0x74);
 const QColor kRule     (0xc6, 0xd0, 0xd9);
-const QColor kAccent   (0xd9, 0x48, 0x0f);        // the piece being moved
+const QColor kAccent   (0xd9, 0x48, 0x0f);
 const QColor kStuck    (0xb4, 0x23, 0x18);
-const QColor kAxis[3] = { QColor(0xc0, 0x39, 0x2b),     // X
-                          QColor(0x2e, 0x8b, 0x57),     // Y
-                          QColor(0x2f, 0x6f, 0x99) };   // Z
+const QColor kAxis[3] = { QColor(0xc0, 0x39, 0x2b),
+                          QColor(0x2e, 0x8b, 0x57),
+                          QColor(0x2f, 0x6f, 0x99) };
 const QColor kBlockedFill(0xf6, 0xdc, 0xd8);
 const QColor kBlockedText(0x9b, 0x2c, 0x1f);
 const QColor kFreeFill   (0xdd, 0xef, 0xe3);
 const QColor kFreeText   (0x1e, 0x6b, 0x3a);
 
-// Non-ASCII punctuation by code point, so the source stays plain ASCII and no
-// compiler code page can mangle it.
 const QChar kDash (0x2014);
 const QChar kArrow(0x2192);
 const QChar kDot  (0x00b7);
@@ -45,7 +43,7 @@ constexpr int    kCanvasW = 1600;
 constexpr int    kHeaderH = 150;
 constexpr int    kRenderH = 1000;
 constexpr int    kFooterH = 110;
-constexpr double kExplode = 0.45;                 // what --cage --png uses
+constexpr double kExplode = 0.45;
 
 QFont font(int px, bool bold = false)
 {
@@ -55,7 +53,6 @@ QFont font(int px, bool bold = false)
     return f;
 }
 
-// "+X" / "-X" from the planner, with a real minus sign for slides.
 QString dirText(int d)
 {
     QString s = QString::fromLatin1(Planner::dirName(d));
@@ -143,7 +140,7 @@ void drawArrow(QPainter &p, const QPointF &from, const QPointF &dir,
     p.drawPolygon(tri);
 }
 
-// Screen direction of a planner direction, taken from the view's own camera so
+// Screen direction of a planner direction, taken from the view's own camera, so
 // an arrow points the way the drawn piece would actually move.
 QPointF screenDir(const MeshView &view, int dir)
 {
@@ -151,9 +148,9 @@ QPointF screenDir(const MeshView &view, int dir)
            qreal(Planner::dirSign(dir));
 }
 
-// The exploded view on a white ground. MeshView paints its own dark ground;
-// every pixel still exactly that colour afterwards is background, and is
-// lifted to white so the image sits on a slide.
+// The exploded view on a white ground: MeshView paints its own dark ground, and
+// every pixel still exactly that colour is lifted to white so the image sits on
+// a slide.
 QImage renderPieces(MeshView &view, const QVector<PuzzlePiece> &pieces,
                     int w, int h)
 {
@@ -183,8 +180,6 @@ bool shown(const QVector<bool> &has, int i)
 {
     return i >= 0 && i < has.size() && has[i];
 }
-
-// ------------------------------------------------------ figure 1: pieces --
 
 QImage figurePieces(const QImage &render, const QVector<PuzzlePiece> &pieces,
                     const QVector<QPointF> &at, const QVector<bool> &has,
@@ -217,8 +212,6 @@ QImage figurePieces(const QImage &render, const QVector<PuzzlePiece> &pieces,
     p.end();
     return img;
 }
-
-// ------------------------------------------- figure 2: adjacency graph --
 
 QImage figureGraph(const QImage &render, const QVector<PuzzlePiece> &pieces,
                    const Planner::Graph &g, const QVector<QPointF> &at,
@@ -253,7 +246,6 @@ QImage figureGraph(const QImage &render, const QVector<PuzzlePiece> &pieces,
             drawNode(p, at[i] + off, 18, QColor(MeshView::tintFor(pieces[i])),
                      i, QPen(kInk, 2.0));
 
-    // Legend, top right.
     p.setFont(font(19));
     for (int a = 0; a < 3; ++a) {
         const int y = top + 24 + a * 32;
@@ -282,8 +274,6 @@ QImage figureGraph(const QImage &render, const QVector<PuzzlePiece> &pieces,
     p.end();
     return img;
 }
-
-// -------------------------------------------------- figure 3: blocking --
 
 QImage figureBlocking(const QVector<PuzzlePiece> &pieces,
                       const Planner::Graph &g,
@@ -369,8 +359,6 @@ QImage figureBlocking(const QVector<PuzzlePiece> &pieces,
     return img;
 }
 
-// ------------------------------------------- figure 4: removal order --
-
 QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
                    const Planner::BlockingModel &model,
                    const Planner::Plan &plan, const MeshView &view,
@@ -388,7 +376,6 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
     const int rowsN = qMax(1, (panels + cols - 1) / cols);
     const int W     = qMax(kCanvasW, 2 * left + cols * pw + (cols - 1) * gap);
 
-    // The assembly sentence is measured first so the footer is sized to it.
     QStringList order;
     for (const Planner::Step &s : plan.assembly)
         order << QStringLiteral("%1 (%2)").arg(s.piece).arg(dirText(s.dir));
@@ -420,8 +407,6 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
                        "direction and slide it out. Orange marks the piece "
                        "leaving at each step; grey rings are pieces already gone."));
 
-    // One layout shared by every panel, so a piece sits in the same place in
-    // each - the eye follows what changes, not where things moved.
     qreal minX = 0, minY = 0, maxX = 0, maxY = 0;
     bool any = false;
     for (int i = 0; i < at.size(); ++i) {
@@ -436,8 +421,6 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
         minY = qMin(minY, at[i].y());  maxY = qMax(maxY, at[i].y());
     }
 
-    // nodeRoom keeps the lowest node's radius clear of the caption - without
-    // it the bottom piece was drawn on top of its own step text.
     const qreal pad = 36, captionH = 60, nodeRoom = 22;
     const qreal spanX = qMax<qreal>(maxX - minX, 1.0);
     const qreal spanY = qMax<qreal>(maxY - minY, 1.0);
@@ -463,7 +446,6 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
         p.setBrush(Qt::white);
         p.drawRoundedRect(QRectF(origin, QSizeF(pw, ph)), 10, 10);
 
-        // Contacts between pieces still in the puzzle.
         p.setPen(QPen(kRule, 2.0));
         for (const Planner::Contact &c : g.contacts) {
             const int a = c.lowSide, b = c.highSide;
@@ -500,7 +482,6 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
             continue;
         }
 
-        // Which ways were open to it at this moment, before it leaves.
         const Planner::DirMask m = model.blocked(g, mover, present);
         QStringList free;
         for (int d = 0; d < Planner::DirectionCount; ++d)
@@ -554,9 +535,7 @@ QImage figureOrder(const QVector<PuzzlePiece> &pieces, const Planner::Graph &g,
     return img;
 }
 
-} // namespace
-
-// -------------------------------------------------------------- the API --
+}
 
 QString PlannerFigure::folderFor(const QString &modelPath)
 {
@@ -605,8 +584,6 @@ PlannerFigure::Result PlannerFigure::write(const QVector<PuzzlePiece> &pieces,
         return r;
     }
 
-    // One view renders the pieces and supplies the camera, so node positions,
-    // colours and arrow directions all come from what is actually drawn.
     MeshView view;
     const QImage render = renderPieces(view, pieces, kCanvasW, kRenderH);
     QVector<bool> has;

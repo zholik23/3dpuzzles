@@ -1,3 +1,8 @@
+//
+// IritSolid - implementation: MeshData to IRIT polygons with a chosen winding,
+// plus the welding and orientation fixes the booleans need.
+//
+
 #include "IritSolid.h"
 
 #include <cmath>
@@ -9,7 +14,7 @@
 namespace IritSolid {
 
 // Signed volume by the divergence theorem: positive when the mesh is wound
-// outward, negative when it is wound inward.
+// outward, negative when inward.
 double signedVolume(const MeshData &m)
 {
     double v = 0.0;
@@ -24,14 +29,13 @@ double signedVolume(const MeshData &m)
     return v / 6.0;
 }
 
+// MeshData to IRIT polygons. Measures how the mesh arrived and corrects it to
+// the winding the caller asked for, since IRIT decides inside from outside by
+// the winding.
 IritPrsrObjectStruct *fromMesh(const MeshData &m, Winding w)
 {
     IritPrsrPolygonStruct *head = NULL;
 
-    // IRIT decides inside from outside by the polygon winding - that is what
-    // IritPrsrUpdatePolyPlane turns into the plane equation the booleans use.
-    // Measure how the mesh arrived, then correct it to what the caller asked
-    // for. See the Winding enum for why the booleans need Inward.
     const bool isInward = signedVolume(m) < 0.0;
     const bool flip = isInward != (w == Winding::Inward);
 
@@ -53,9 +57,6 @@ IritPrsrObjectStruct *fromMesh(const MeshData &m, Winding w)
 
         IritPrsrPolygonStruct *poly = IritPrsrAllocPolygon(0, v0, head);
         if (!IritPrsrUpdatePolyPlane(poly)) {
-            // Degenerate triangle: no plane, so no use to a boolean. Dropping
-            // it is right - keeping it would poison the whole operation. The
-            // list is still linear here, so freeing it terminates.
             poly -> PVertex = NULL;
             IritPrsrFreeVertexList(v0);
             IritPrsrFreePolygon(poly);
@@ -67,26 +68,18 @@ IritPrsrObjectStruct *fromMesh(const MeshData &m, Winding w)
     if (head == NULL)
         return NULL;
 
-    // The booleans build adjacencies, and that needs every vertex list CLOSED
-    // back on itself. A NULL-terminated list is rejected outright with
-    // "Vertex list must be circular for proper adjacencies". Done here, after
-    // the planes, so the failure path above still walks a linear list to free.
     IritPrsrOpenPolysToClosed(head);
     return IritPrsrGenPOLYObject(head);
 }
 
-// IRIT's booleans build vertex adjacencies, and that needs every vertex list
-// closed back on itself. Objects that come out of the tessellator, out of a
-// transform copy, or out of a previous boolean can all be open, so this is
-// applied defensively to both operands before every operation rather than once
-// at the start.
+// Closes every vertex list back on itself. The booleans build adjacencies and
+// reject a NULL-terminated list outright.
 void closeLists(IritPrsrObjectStruct *o)
 {
     for (; o != NULL; o = o -> Pnext)
         if (IRIT_PRSR_IS_POLY_OBJ(o) && o -> U.Pl != NULL)
             IritPrsrOpenPolysToClosed(o -> U.Pl);
 }
-
 
 bool isClosed(const MeshData &m)
 {
@@ -105,7 +98,8 @@ bool isClosed(const MeshData &m)
     return true;
 }
 
-
+// Welds vertices within eps. Hashes on a grid of side eps and looks across the
+// 27-cell neighbourhood, since two near points can fall in different cells.
 void weldClose(MeshData *m, double eps)
 {
     const int nVert = int(m->pos.size() / 3);
@@ -123,9 +117,6 @@ void weldClose(MeshData *m, double eps)
             return;
     }
 
-    // Hash on a grid of side eps. Two points closer than eps can still fall in
-    // neighbouring cells, so each point is looked up across its 27-cell
-    // neighbourhood rather than only its own cell.
     const double inv = 1.0 / eps;
     QHash<quint64, QVector<int>> grid;
     grid.reserve(nVert);
@@ -173,7 +164,7 @@ void weldClose(MeshData *m, double eps)
         const uint32_t b = remap[m->tris[t + 1]];
         const uint32_t c = remap[m->tris[t + 2]];
         if (a == b || b == c || a == c)
-            continue;                       // collapsed by the weld
+            continue;
         tris.append(a); tris.append(b); tris.append(c);
     }
 
@@ -183,18 +174,17 @@ void weldClose(MeshData *m, double eps)
     m->finalize();
 }
 
+// Makes every shell consistently wound, deciding per shell rather than once for
+// the mesh: a piece can be several lumps, and an inside-out one hides inside a
+// larger correct one and silently subtracts when measured.
 void orientConsistently(MeshData *m)
 {
-    // Adjacency is the whole mechanism here, so coincident-but-distinct
-    // vertices have to go first: without this the six faces of a tessellated
-    // cage box share no edges and the walk below propagates nothing.
     weldClose(m);
 
     const int nTri = m->triangleCount();
     if (nTri < 2)
         return;
 
-    // Undirected edge -> the triangles that use it.
     QHash<quint64, QVector<int>> edgeTris;
     edgeTris.reserve(nTri * 3);
     const auto key = [](uint32_t a, uint32_t b) {
@@ -206,11 +196,9 @@ void orientConsistently(MeshData *m)
             edgeTris[key(m->tris[t * 3 + e], m->tris[t * 3 + (e + 1) % 3])].append(t);
 
     QVector<bool> seen(nTri, false);
-    QVector<int>  comp(nTri, -1);          // which shell each triangle is in
+    QVector<int>  comp(nTri, -1);
     int nComp = 0;
 
-    // Every component gets its own walk: a divided piece can legitimately be
-    // more than one shell.
     for (int root = 0; root < nTri; ++root) {
         if (seen[root])
             continue;
@@ -228,9 +216,6 @@ void orientConsistently(MeshData *m)
                 for (int n : edgeTris.value(key(a, b))) {
                     if (n == t || seen[n])
                         continue;
-                    // Two correctly-oriented neighbours traverse their shared
-                    // edge in OPPOSITE directions. Same direction means one of
-                    // them is inside-out.
                     bool sameDir = false;
                     for (int f = 0; f < 3; ++f)
                         if (m->tris[n * 3 + f] == a &&
@@ -246,13 +231,6 @@ void orientConsistently(MeshData *m)
         }
     }
 
-    // Consistent within each shell now, but a shell can still be consistently
-    // inside-out - and the decision has to be made PER SHELL, not once for the
-    // whole mesh. A piece cut from a non-convex model can be several separate
-    // lumps, and testing only the total lets a negative lump hide inside a
-    // larger positive one. The cost of getting this wrong is silent: such a
-    // lump SUBTRACTS when the piece is later measured or merged, which showed
-    // up as a reattachment landing exactly two lump-volumes light.
     QVector<double> vol(nComp, 0.0);
     for (int t = 0; t < nTri; ++t) {
         const float *A = &m->pos[m->tris[t * 3 + 0] * 3];
@@ -270,4 +248,4 @@ void orientConsistently(MeshData *m)
     m->computeNormals();
 }
 
-} // namespace IritSolid
+}

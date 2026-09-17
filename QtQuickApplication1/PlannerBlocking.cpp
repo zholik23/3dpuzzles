@@ -1,3 +1,8 @@
+//
+// PlannerBlocking - implementation: the translational model, the always-blocked
+// model used to check the search itself, and the blocking description lines.
+//
+
 #include "PlannerBlocking.h"
 
 namespace Planner {
@@ -12,8 +17,6 @@ QString maskToString(DirMask m)
             on << QString::fromLatin1(dirName(d));
     return on.isEmpty() ? QStringLiteral("none") : on.join(QStringLiteral(" "));
 }
-
-// ------------------------------------------------------- translational ------
 
 QString TranslationalBlocking::name() const
 {
@@ -37,8 +40,7 @@ DirMask TranslationalBlocking::blocked(const Graph &g, int piece,
     for (int ci : g.incident[piece]) {
         const int other = g.otherSide(ci, piece);
         if (other < 0 || other >= present.size() || !present[other])
-            continue;                   // already removed: not in the way
-        // A neighbour sitting on this face stops the piece leaving through it.
+            continue;
         m = withBlocked(m, g.directionFrom(ci, piece));
     }
     return m;
@@ -61,8 +63,6 @@ QVector<int> TranslationalBlocking::blockers(const Graph &g, int piece, int dir,
     return out;
 }
 
-// ------------------------------------------------------------ test only -----
-
 QString AlwaysBlocking::name() const
 {
     return QStringLiteral("fully blocking (test model)");
@@ -80,9 +80,9 @@ DirMask AlwaysBlocking::blocked(const Graph &g, int piece,
     for (int ci : g.incident.value(piece)) {
         const int other = g.otherSide(ci, piece);
         if (other >= 0 && other < present.size() && present[other])
-            return 0x3Fu;               // every direction
+            return 0x3Fu;
     }
-    return 0;                           // no neighbours left: free
+    return 0;
 }
 
 QVector<int> AlwaysBlocking::blockers(const Graph &g, int piece, int dir,
@@ -97,8 +97,6 @@ QVector<int> AlwaysBlocking::blockers(const Graph &g, int piece, int dir,
     }
     return out;
 }
-
-// ----------------------------------------------------------------- log ------
 
 QStringList describeBlocking(const Graph &g, const BlockingModel &model,
                              int maxPieces)
@@ -138,4 +136,4 @@ QStringList describeBlocking(const Graph &g, const BlockingModel &model,
     return out;
 }
 
-} // namespace Planner
+}

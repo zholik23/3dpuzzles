@@ -1,3 +1,8 @@
+//
+// IritJoint - implementation: builds the pin loft, places it on a face, and
+// applies it to a piece as a boolean, all inside IritGuard.
+//
+
 #include "IritJoint.h"
 
 #include "IritGuard.h"
@@ -15,15 +20,6 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// --------------------------------------------------------------- mesh in ---
-//
-// MeshData is a flat triangle soup; IRIT wants a chain of polygons, each with
-// its plane equation set. Booleans need that plane, so IritPrsrUpdatePolyPlane
-// is not optional - a polygon without one is silently skipped.
-
-// The mesh-to-IRIT conversion and the list closing live in IritSolid now: the
-// cage-vs-model intersection needs exactly the same two fixes, and one copy is
-// better than two that can drift apart.
 using IritSolid::closeLists;
 using IritSolid::signedVolume;
 static IritPrsrObjectStruct *meshToIrit(const MeshData &m)
@@ -31,35 +27,17 @@ static IritPrsrObjectStruct *meshToIrit(const MeshData &m)
     return IritSolid::fromMesh(m, IritSolid::Winding::Outward);
 }
 
-// ------------------------------------------------------------- the joint ---
-//
-// Elber's pin, section for section out of PuzTile() in puz_vol.irt. Built once
-// at unit size about +Z, then transformed into place per joint.
-//
-//   Crc = pcircle( vector( 0, 0, 0 ), 0.2 )
-//   sFromCrvs( list( Crc          * tz( -0.02 ),
-//                    Crc * sc( 0.75  ),
-//                    Crc * sc( 0.775 ) * tz( 0.2 ),
-//                    Crc * sc( 0.8   ) * tz( 0.3 ),
-//                    Crc * sc( 0.8   ) * tz( 0.4 ),
-//                    Crc * sc( 0.6   ) * tz( 0.6 ),
-//                    Crc * sc( 0.0   ) * tz( 0.6 ) ), 3, kv_open )
-
 struct PinSection { double z, scale; };
 
 const PinSection kElberPin[] = {
-    { -1.00, 0.000 },     // cap closing the sunk base: without it the loft is a
-                          // tube open at the root, and the UNION that makes the
-                          // pin loses material there. Elber never needs this -
-                          // his open root is closed by the tile it grows from -
-                          // but ours is a free-standing tool used twice.
-    { -1.00, 1.000 },     // the sunk base ring - depth from p.baseSink
+    { -1.00, 0.000 },
+    { -1.00, 1.000 },
     {  0.00, 0.750 },
     {  0.20, 0.775 },
-    {  0.30, 0.800 },     // the barb swells here ...
+    {  0.30, 0.800 },
     {  0.40, 0.800 },
-    {  0.60, 0.600 },     // ... and necks in before the tip, which is what holds
-    {  0.60, 0.000 }      // the cap: without it the loft is not a solid
+    {  0.60, 0.600 },
+    {  0.60, 0.000 }
 };
 const int kElberPinCount = int(sizeof(kElberPin) / sizeof(kElberPin[0]));
 
@@ -67,25 +45,16 @@ CagdCrvStruct *buildSections(const JointParams &p)
 {
     CagdCrvStruct *head = NULL, *tail = NULL;
 
-    // His table is written against a 0.6-tall pin; scaling z keeps the profile
-    // proportional if the height is changed.
     const double zScale = p.height > 1e-9 ? p.height / 0.60 : 1.0;
 
     for (int i = 0; i < kElberPinCount; ++i) {
         const double r = p.pinRadius * kElberPin[i].scale;
-        // The sentinel -1 marks the sunk base section; everything else is
-        // Elber's table scaled to the requested height.
         const double z = (kElberPin[i].z <= -0.99)
                              ? -p.baseSink * p.height
                              : kElberPin[i].z * zScale;
 
         CagdPtStruct centre;
         centre.Pt[0] = centre.Pt[1] = centre.Pt[2] = 0.0;
-        // A zero-radius circle cannot be constructed, so the cap is built full
-        // size and then collapsed by a zero scale - Elber's `Crc * sc( 0.0 )`.
-        // Building it at a tiny radius instead is NOT the same thing: it leaves
-        // a real ring of control points, the loft stays open there, and the tip
-        // came out with 16 unmatched edges.
         CagdCrvStruct *crv =
             IritCagdBspCrvCreateCircle(&centre, r > 1e-9 ? r : p.pinRadius);
         if (crv == NULL)
@@ -104,7 +73,6 @@ CagdCrvStruct *buildSections(const JointParams &p)
     return head;
 }
 
-// The lofted surface, tessellated into a closed polygonal solid.
 IritPrsrObjectStruct *buildTool(const JointParams &p)
 {
     CagdCrvStruct *sections = buildSections(p);
@@ -132,12 +100,9 @@ IritPrsrObjectStruct *buildTool(const JointParams &p)
     st.ComputeUV           = FALSE;
     st.FineNess            = p.fineNess;
 
-    // Consumes srfObj and returns a chain; the loft is one surface, so the
-    // chain is one polygonal object.
     IritPrsrObjectStruct *polys =
         IritPrsrConvertFreeFormHierachy(srfObj, &st, FALSE, FALSE);
 
-    // The tessellator hands back OPEN vertex lists, which the booleans refuse.
     for (IritPrsrObjectStruct *o = polys; o != NULL; o = o -> Pnext)
         if (IRIT_PRSR_IS_POLY_OBJ(o) && o -> U.Pl != NULL)
             IritPrsrOpenPolysToClosed(o -> U.Pl);
@@ -145,9 +110,6 @@ IritPrsrObjectStruct *buildTool(const JointParams &p)
     return polys;
 }
 
-// Places the unit tool: clearance scale, then size, then onto the face normal,
-// then out to the site. IRIT is row-vector, so the multiplication order reads
-// the same as the `Obj * m1 * m2` chain in the .irt.
 void placementMatrix(const JointPlacement &j, const JointParams &p,
                      IrtHmgnMatType out)
 {
@@ -161,8 +123,8 @@ void placementMatrix(const JointPlacement &j, const JointParams &p,
     IritMiscMatGenMatUnifScale(j.size, mSize);
 
     switch (j.axis) {
-        case 0:  IritMiscMatGenMatRotY1( kPi * 0.5, mRot); break;  // +Z -> +X
-        case 1:  IritMiscMatGenMatRotX1(-kPi * 0.5, mRot); break;  // +Z -> +Y
+        case 0:  IritMiscMatGenMatRotY1( kPi * 0.5, mRot); break;
+        case 1:  IritMiscMatGenMatRotX1(-kPi * 0.5, mRot); break;
         default: IritMiscMatGenUnitMat(mRot);              break;
     }
     IritMiscMatGenMatTrans(j.at[0], j.at[1], j.at[2], mTr);
@@ -172,11 +134,6 @@ void placementMatrix(const JointPlacement &j, const JointParams &p,
     IritMiscMatMultTwo4by4(mTmp, out,  mTr);
     IRIT_HMGN_MAT_COPY(out, mTmp);
 }
-
-// ------------------------------------------------------------- the guard ---
-//
-// IRIT's fatal errors longjmp, so everything that can raise one runs inside a
-// POD context with no C++ destructors in scope.
 
 struct Ctx {
     IritPrsrObjectStruct  *piece;
@@ -219,8 +176,6 @@ void doApply(void *v)
             ++c -> applied;
         }
         else {
-            // IRIT hands back the first operand when the two do not intersect.
-            // That is a real result - the piece is unchanged - not a crash.
             ++c -> declined;
             if (res != NULL && res != c -> piece)
                 IritPrsrFreeObject(res);
@@ -242,20 +197,14 @@ void doBuildTool(void *v)
     c -> out = buildTool(*c -> p);
 }
 
-} // namespace
-
-// ------------------------------------------------------------------ api ----
+}
 
 double IritJoint::sizeForFace(const JointParams &p, double faceMin, double depth)
 {
-    // Widest point of the loft, in joint-local units: the base collar that sits
-    // just inside the face.
     const double toolR = p.pinRadius;
     if (toolR <= 1e-9 || faceMin <= 0.0)
         return 0.0;
 
-    // Span `faceFraction` of the narrower side, then hold the pin short of the
-    // depth of both pieces it lives between.
     double size = p.faceFraction * faceMin / (2.0 * toolR);
     if (p.height > 1e-9)
         size = qMin(size, 0.8 * depth / p.height);
@@ -264,8 +213,6 @@ double IritJoint::sizeForFace(const JointParams &p, double faceMin, double depth
     if (p.minSize > 0.0 && size < p.minSize)
         return 0.0;
 
-    // Printability floor: a joint thinner than the printer can lay down is not
-    // a joint. Leaving the face bare is the honest outcome.
     if (p.minPinThickness > 0.0 &&
         thinnestFeature(p, size) < p.minPinThickness)
         return 0.0;
@@ -285,7 +232,7 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacementsFor(
 
     for (int ci = 0; ci < g.contactCount(); ++ci) {
         if (ci >= keep.size() || !keep[ci])
-            continue;                       // the planner left this face bare
+            continue;
 
         const Planner::Contact &c = g.contacts[ci];
         if (c.lowSide < 0 || c.highSide >= pieces.size())
@@ -326,8 +273,6 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacements(
     QVector<QVector<JointPlacement> > out(pieces.size());
     int dropped = 0;
 
-    // Widest point of the loft, in joint-local units: the base collar that sits
-    // just inside the face.
     const double toolR = p.pinRadius;
     if (toolR <= 1e-9) {
         if (skipped != nullptr) *skipped = links.size();
@@ -341,7 +286,6 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacements(
         if (axis < 0 || axis > 2)
             continue;
 
-        // Which one is on the low side of the shared plane.
         int lo = l.a, hi = l.b;
         if (pieces[lo].p0[axis] > pieces[hi].p0[axis])
             qSwap(lo, hi);
@@ -381,7 +325,6 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacements(
     return out;
 }
 
-
 bool IritJoint::apply(MeshData *mesh, const QVector<JointPlacement> &places,
                       const JointParams &p, QString *error, int *applied,
                       int *declined)
@@ -409,16 +352,12 @@ bool IritJoint::apply(MeshData *mesh, const QVector<JointPlacement> &places,
     c.declined = 0;
 
     if (!IritGuard::run(&c, doApply)) {
-        // The longjmp left IRIT's allocations unreachable. Leaking them beats
-        // freeing a half-consumed boolean result.
         if (error != nullptr)
             *error = IritGuard::lastError();
         return false;
     }
 
     if (c.applied == 0) {
-        // Every boolean declined: the tool never met the piece. Almost always
-        // an open (non-watertight) piece, or a joint placed off its surface.
         IritPrsrFreeObject(c.piece);
         if (error != nullptr)
             *error = QStringLiteral("all %1 boolean(s) declined - the piece is "
@@ -449,7 +388,6 @@ bool IritJoint::apply(MeshData *mesh, const QVector<JointPlacement> &places,
 
 double IritJoint::thinnestFeature(const JointParams &p, double size)
 {
-    // The neck: the narrowest section that still carries material.
     double thinnest = 1e30;
     for (int i = 0; i < kElberPinCount; ++i)
         if (kElberPin[i].scale > 1e-6)

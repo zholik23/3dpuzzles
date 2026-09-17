@@ -1,3 +1,8 @@
+//
+// MeshView - implementation: camera and projection, z-buffered rasterising, and
+// the per-piece screen anchors the planner figures reuse.
+//
+
 #include "MeshView.h"
 
 #include <QMouseEvent>
@@ -9,14 +14,11 @@
 namespace {
 
 constexpr float kDegToRad     = 3.14159265358979323846f / 180.0f;
-constexpr int   kMaxDrawEdges = 400000;      // beyond this, edges are subsampled
+constexpr int   kMaxDrawEdges = 400000;
 
 const QRgb kBackground = qRgb(0x20, 0x24, 0x2b);
 const QRgb kSinglePart = qRgb(0xc9, 0xa0, 0x6a);
 
-// Distinct hues for adjacent pieces. Grid neighbours land on different entries
-// because consecutive cells differ in k, so a face between two pieces is always
-// a colour change - which is the whole point of looking at an exploded view.
 const QRgb kPalette[] = {
     qRgb(0xd8, 0x9c, 0x62), qRgb(0x7a, 0xb0, 0xc8), qRgb(0x9c, 0xc0, 0x7e),
     qRgb(0xcf, 0x8b, 0x8b), qRgb(0xa9, 0x92, 0xc9), qRgb(0xd6, 0xc0, 0x70),
@@ -24,7 +26,7 @@ const QRgb kPalette[] = {
 };
 constexpr int kPaletteSize = int(sizeof(kPalette) / sizeof(kPalette[0]));
 
-} // namespace
+}
 
 MeshView::MeshView(QQuickItem *parent)
     : QQuickPaintedItem(parent)
@@ -33,8 +35,6 @@ MeshView::MeshView(QQuickItem *parent)
     setAcceptHoverEvents(false);
     setFlag(ItemHasContents, true);
 }
-
-// ------------------------------------------------------------- geometry in --
 
 void MeshView::setMesh(const MeshData &mesh)
 {
@@ -76,10 +76,10 @@ void MeshView::clearMesh()
     update();
 }
 
+// Colour by cell index rather than list position, so a piece keeps its colour
+// when the grid changes size.
 QRgb MeshView::tintFor(const PuzzlePiece &piece)
 {
-    // Colour by cell index rather than list position, so a piece keeps its
-    // colour when the grid changes size.
     const int h = piece.i * 5 + piece.j * 3 + piece.k;
     return kPalette[((h % kPaletteSize) + kPaletteSize) % kPaletteSize];
 }
@@ -89,8 +89,8 @@ QRgb MeshView::background()
     return kBackground;
 }
 
-// Assigns each part its slice of m_proj and the direction it moves when the
-// assembly is exploded: straight out from the centre of the whole set.
+// Assigns each part its slice of the projected-vertex buffer and the direction
+// it moves when the assembly is exploded.
 void MeshView::rebuildParts()
 {
     m_proj.clear();
@@ -133,18 +133,12 @@ void MeshView::rebuildParts()
 
         const float len = std::sqrt(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]);
 
-        // Offset alone leaves pieces near the middle almost stationary - the
-        // inner ring of a cylinder, the core of a sphere. Adding a fixed step
-        // along the same direction guarantees every piece clears its
-        // neighbours while keeping the layout recognisably the original shape.
         if (len > 1e-6f) {
             for (int k = 0; k < 3; ++k)
                 p.push[k] = off[k] + (off[k] / len) * 0.45f * radius;
         }
         else {
-            // Dead centre: no direction to push along, so fan it out using the
-            // part's position in the list purely to break the tie.
-            const float a = 2.399963f * float(n);        // golden angle
+            const float a = 2.399963f * float(n);
             p.push[0] = 0.45f * radius * std::cos(a);
             p.push[1] = 0.45f * radius * std::sin(a);
             p.push[2] = 0.0f;
@@ -183,8 +177,6 @@ void MeshView::setController(AppController *c)
     emit controllerChanged();
 }
 
-// ---------------------------------------------------------------- view set --
-
 void MeshView::setYaw(qreal v)
 {
     if (qFuzzyCompare(m_yaw, v)) return;
@@ -193,7 +185,6 @@ void MeshView::setYaw(qreal v)
 
 void MeshView::setPitch(qreal v)
 {
-    // Clamped so the model cannot be rolled past vertical and end up mirrored.
     v = qBound(-89.9, v, 89.9);
     if (qFuzzyCompare(m_pitch, v)) return;
     m_pitch = v; emit viewChanged(); update();
@@ -232,8 +223,6 @@ void MeshView::resetView()
     update();
 }
 
-// -------------------------------------------------------------- projection --
-
 void MeshView::setFixedBounds(const float bmin[3], const float bmax[3])
 {
     for (int k = 0; k < 3; ++k) {
@@ -250,6 +239,8 @@ void MeshView::clearFixedBounds()
     update();
 }
 
+// Fits the whole set on screen, leaving extra room when the pieces are exploded
+// outward.
 bool MeshView::camera(int w, int h, Camera *c) const
 {
     if (m_parts.isEmpty())
@@ -268,7 +259,6 @@ bool MeshView::camera(int w, int h, Camera *c) const
     if (!(radius > 1e-12f))
         radius = 1.0f;
 
-    // Exploding pushes pieces outward, so the set needs more room on screen.
     const float fit = radius * (1.0f + float(m_explode));
     c->scale = (float(qMin(w, h)) * 0.45f * float(m_zoom)) / fit;
     c->ox    = 0.5f * float(w);
@@ -285,18 +275,16 @@ void MeshView::orient(Camera *c) const
     c->sp = std::sin(float(m_pitch) * kDegToRad);
 }
 
-// (x, y, z) is already centred and exploded.
 void MeshView::project(const Camera &c, float x, float y, float z, SV *s) const
 {
-    // Yaw about Y, then pitch about X.
     const float x1 =  c.cy * x + c.sy * z;
     const float z1 = -c.sy * x + c.cy * z;
     const float y2 =  c.cp * y - c.sp * z1;
     const float z2 =  c.sp * y + c.cp * z1;
 
     s->x = c.ox + x1 * c.scale;
-    s->y = c.oy - y2 * c.scale;          // screen Y grows downward
-    s->z = z2 * c.scale;                 // larger z = nearer the viewer
+    s->y = c.oy - y2 * c.scale;
+    s->z = z2 * c.scale;
 }
 
 void MeshView::projectVertices(int w, int h)
@@ -317,6 +305,7 @@ void MeshView::projectVertices(int w, int h)
     }
 }
 
+// Screen position of each piece, for the planner figures to label.
 QVector<QPointF> MeshView::pieceAnchors(int w, int h, QVector<bool> *valid) const
 {
     int n = 0;
@@ -362,23 +351,15 @@ QPointF MeshView::axisOnScreen(int axis) const
     return QPointF(qreal(s.x), qreal(s.y));
 }
 
-// ------------------------------------------------------------- rasterising --
-
 void MeshView::rasterise(int w, int h)
 {
     if (m_frame.width() != w || m_frame.height() != h)
         m_frame = QImage(w, h, QImage::Format_RGB32);
     m_frame.fill(kBackground);
 
-    // Sized and cleared before the early-out: a curve-only file has no
-    // triangles, but the edge pass still depth-tests against this buffer.
     m_zbuf.resize(w * h);
     m_zbuf.fill(-std::numeric_limits<float>::max());
 
-    // Rotate the face normal the same way the vertices were rotated, then use
-    // its view-space Z as a headlight term. abs() gives two-sided shading, so
-    // open surfaces (a lone trimmed patch, the cut face of a puzzle piece)
-    // stay lit from either side instead of going black.
     const float cy = std::cos(float(m_yaw)   * kDegToRad);
     const float sy = std::sin(float(m_yaw)   * kDegToRad);
     const float cp = std::cos(float(m_pitch) * kDegToRad);
@@ -399,9 +380,7 @@ void MeshView::rasterise(int w, int h)
 
             const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
             if (!(std::fabs(area) >= 1e-7f))
-                continue;     // degenerate on screen - and NaN fails this too,
-                              // which keeps a corrupt file out of the int casts
-                              // below, where it would be undefined behaviour.
+                continue;
 
             int minX = int(std::floor(qMin(a.x, qMin(b.x, c.x))));
             int maxX = int(std::ceil (qMax(a.x, qMax(b.x, c.x))));
@@ -433,10 +412,6 @@ void MeshView::rasterise(int w, int h)
                 for (int x = minX; x <= maxX; ++x) {
                     const float px = float(x) + 0.5f;
 
-                    // Each weight comes from the edge opposite its vertex.
-                    // Dividing by the *signed* area normalises the winding away,
-                    // so "all three >= 0" means inside for front- and back-facing
-                    // triangles alike - open surfaces stay solid, no culling.
                     const float wa = ((c.x - b.x) * (py - b.y) - (c.y - b.y) * (px - b.x)) * invArea;
                     const float wb = ((a.x - c.x) * (py - c.y) - (a.y - c.y) * (px - c.x)) * invArea;
                     const float wc = ((b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x)) * invArea;
@@ -454,10 +429,6 @@ void MeshView::rasterise(int w, int h)
     }
 }
 
-// Draws the edge lists into the shaded frame with a depth test against the same
-// z-buffer, so edges on hidden faces stay hidden. Without this the wireframe
-// shows straight through the model - which makes an exploded assembly
-// unreadable.
 void MeshView::drawEdgesDepthTested(int w, int h)
 {
     int nEdgeTotal = 0;
@@ -466,21 +437,11 @@ void MeshView::drawEdgesDepthTested(int w, int h)
     if (nEdgeTotal == 0)
         return;
 
-    // Once there are more edges than roughly one per 8 pixels, every triangle
-    // is a couple of pixels across and the wireframe stops describing the
-    // surface - it just darkens it. Drop the overlay rather than render mush;
-    // the shading still shows the form, and unshaded mode still draws them all.
     if (nEdgeTotal > (w * h) / 8)
         return;
 
-    // Edges sit exactly on the triangles they bound, so they need a bias to
-    // win the depth comparison against their own faces.
     const float bias = 0.75f;
 
-    // Two colours, picked per pixel: a dark line reads as a crease on top of a
-    // lit surface, but would be invisible against the background. Anything
-    // still at the z-buffer's clear value has no surface behind it - a
-    // silhouette edge, or a model made only of curves - and gets the light pen.
     const float clear = -std::numeric_limits<float>::max();
     const int   onSurfR = 0x1c, onSurfG = 0x20, onSurfB = 0x26;
     const int   onBackR = 0x9f, onBackG = 0xc4, onBackB = 0xdc;
@@ -498,7 +459,7 @@ void MeshView::drawEdgesDepthTested(int w, int h)
 
             const float dx = q.x - p.x, dy = q.y - p.y;
             const int   n  = int(std::ceil(qMax(std::fabs(dx), std::fabs(dy))));
-            if (n <= 0 || n > 8192)         // nothing, or absurdly long
+            if (n <= 0 || n > 8192)
                 continue;
 
             const float sx = dx / float(n), sy = dy / float(n);
@@ -511,7 +472,7 @@ void MeshView::drawEdgesDepthTested(int w, int h)
                     continue;
                 const float depth = m_zbuf[yi * w + xi];
                 if (z + bias < depth)
-                    continue;                    // behind a nearer surface
+                    continue;
 
                 const bool bare = (depth == clear);
                 const int  r = bare ? onBackR : onSurfR;
@@ -527,8 +488,6 @@ void MeshView::drawEdgesDepthTested(int w, int h)
         }
     }
 }
-
-// ------------------------------------------------------------------- paint --
 
 void MeshView::paint(QPainter *painter)
 {
@@ -549,8 +508,6 @@ void MeshView::paint(QPainter *painter)
 
     if (m_shaded) {
         rasterise(w, h);
-        // Edges go into the same image so they can be depth-tested against the
-        // surface that was just drawn.
         if (m_showEdges)
             drawEdgesDepthTested(w, h);
         painter->drawImage(0, 0, m_frame);
@@ -561,8 +518,6 @@ void MeshView::paint(QPainter *painter)
     if (!m_showEdges)
         return;
 
-    // Unshaded: a see-through wireframe with every edge visible. There is no
-    // depth buffer to test against here, and seeing the far side is the point.
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     int nEdgeTotal = 0;
@@ -585,8 +540,6 @@ void MeshView::paint(QPainter *painter)
         painter->drawLines(lines);
     }
 }
-
-// ------------------------------------------------------------ interaction --
 
 void MeshView::mousePressEvent(QMouseEvent *e)
 {

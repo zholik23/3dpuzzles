@@ -3,6 +3,12 @@
 *How to move the material-aware BSP division out of the Qt app and into IRIT
 itself — as a GuIrit panel, as an IRIT script function, or both.*
 
+> **Already done on this machine.** The GuIrit panel from Route A is built and
+> installed, and the Route B source edits are in place. What was changed, and
+> what is still blocked, is recorded in
+> [`BSP_IN_IRIT_WHAT_CHANGED.md`](BSP_IN_IRIT_WHAT_CHANGED.md). Read this guide
+> for how and why; read that one for the current state of the tree.
+
 Everything here was checked against the IRIT tree at `C:\irit\irit` and the
 GuIrit source at `C:\irit\extra\guirit\Src` on this machine. File paths, symbol
 names, table rows and line numbers are real. Where a statement is inference

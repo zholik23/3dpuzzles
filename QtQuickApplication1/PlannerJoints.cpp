@@ -1,3 +1,8 @@
+//
+// PlannerJoints - implementation: the jointed blocking model, and the choice of
+// which contacts may carry a joint without breaking the removal order.
+//
+
 #include "PlannerJoints.h"
 
 namespace Planner {
@@ -19,6 +24,8 @@ QString JointedBlocking::caveat() const
                           "real collision check pending");
 }
 
+// Starts from all six directions allowed and takes them away. A mated peg
+// permits only straight back out along its own axis.
 DirMask JointedBlocking::blocked(const Graph &g, int piece,
                                  const QVector<bool> &present) const
 {
@@ -26,20 +33,17 @@ DirMask JointedBlocking::blocked(const Graph &g, int piece,
     if (piece < 0 || piece >= g.incident.size())
         return m;
 
-    // Start from the six directions being allowed, and take them away.
     DirMask allowed = 0x3Fu;
 
     for (int ci : g.incident[piece]) {
         const int other = g.otherSide(ci, piece);
         if (other < 0 || other >= present.size() || !present[other])
-            continue;                       // gone: neither face nor peg matters
+            continue;
 
         const int toward = g.directionFrom(ci, piece);
-        m = withBlocked(m, toward);         // the face itself is in the way
+        m = withBlocked(m, toward);
 
         if (ci < m_joints.size() && m_joints[ci]) {
-            // Mated peg: the only motion it permits is straight back out along
-            // its own axis. Everything else goes.
             allowed &= (1u << dirOpposite(toward));
         }
     }
@@ -62,8 +66,6 @@ QVector<int> JointedBlocking::blockers(const Graph &g, int piece, int dir,
         const int toward = g.directionFrom(ci, piece);
         const bool jointed = (ci < m_joints.size() && m_joints[ci]);
 
-        // Responsible for `dir` either because it is the face being pushed
-        // into, or because its peg forbids everything but its own way out.
         if (toward == dir || (jointed && dir != dirOpposite(toward)))
             if (!out.contains(other))
                 out.append(other);
@@ -71,20 +73,19 @@ QVector<int> JointedBlocking::blockers(const Graph &g, int piece, int dir,
     return out;
 }
 
-// --------------------------------------------------------------- choosing ---
-
 JointSet allContacts(const Graph &g)
 {
     return JointSet(g.contactCount(), true);
 }
 
+// Picks which contacts may carry a joint without breaking the removal order: the
+// piece that leaves first is the one that has to pull a peg.
 JointSet chooseAlongOrder(const Graph &g, const Plan &plan)
 {
     JointSet joints(g.contactCount(), false);
     if (!plan.complete)
         return joints;
 
-    // When each piece comes off, and which way it goes.
     QVector<int> step(g.pieceCount(), -1);
     QVector<int> exitDir(g.pieceCount(), -1);
     for (int i = 0; i < plan.removal.size(); ++i) {
@@ -100,7 +101,6 @@ JointSet chooseAlongOrder(const Graph &g, const Plan &plan)
         if (step[c.lowSide] < 0 || step[c.highSide] < 0)
             continue;
 
-        // The one that leaves first is the one that has to pull a peg.
         const int first = (step[c.lowSide] < step[c.highSide]) ? c.lowSide
                                                                : c.highSide;
         const int away  = dirOpposite(g.directionFrom(ci, first));
@@ -118,8 +118,6 @@ int countJoints(const JointSet &joints)
             ++n;
     return n;
 }
-
-// ------------------------------------------------------------------- log ----
 
 QStringList describeJoints(const Graph &g, const JointSet &joints, int maxPieces)
 {
@@ -191,4 +189,4 @@ QStringList explainOverConstrained(const Graph &g, const JointSet &joints,
     return out;
 }
 
-} // namespace Planner
+}
