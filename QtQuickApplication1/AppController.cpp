@@ -1045,6 +1045,14 @@ void AppController::cutCellDovetails()
     int cut = 0, failed = 0, skipped = 0;
     QString firstErr;
 
+    // Every piece as it stands before any cut, so the whole set of dovetails
+    // can be abandoned if one of them destabilises IRIT. See the check after
+    // the loop.
+    QVector<MeshData> preCut;
+    preCut.reserve(m_pieces.size());
+    for (const PuzzlePiece &pc : m_pieces)
+        preCut.append(pc.mesh);
+
     for (int ci = 0; ci < graph.contactCount(); ++ci) {
         const Planner::Contact &c = graph.contacts[ci];
 
@@ -1102,6 +1110,30 @@ void AppController::cutCellDovetails()
                 firstErr = err;
             qWarning().noquote() << "CELL DOVETAIL contact" << ci << "-" << err;
         }
+    }
+
+    // An assertion inside IRIT is not a cut that merely declined.
+    //
+    // Measured on bimba.obj: with joints off it trims 4 of 4 pieces cleanly,
+    // and with joints on one cut raises "assertion failed inside IRIT
+    // (unsupported configuration)". The cut itself is refused, but the abort
+    // leaves the kernel unable to finish the LATER trim, which then falls back
+    // to the cell box - the stray yellow box in the viewport.
+    //
+    // So once that happens, give up on dovetails for this division entirely and
+    // hand back the pieces exactly as they were. A correct division with flat
+    // cuts beats a jointed one with a raw box in it.
+    if (firstErr.contains(QStringLiteral("assertion"), Qt::CaseInsensitive)) {
+        for (int i = 0; i < m_pieces.size() && i < preCut.size(); ++i)
+            m_pieces[i].mesh = preCut[i];
+
+        m_cellJointNote =
+            QStringLiteral("dovetails abandoned - a cut hit an assertion inside "
+                           "IRIT, which leaves the kernel unable to finish the "
+                           "trim; the pieces were restored and divided with flat "
+                           "cuts instead");
+        qWarning().noquote() << m_cellJointNote;
+        return;
     }
 
     m_cellJointNote =

@@ -4,7 +4,7 @@
 <style>body{margin:0;background:#fff;color:#141a20;font:15px/1.55 'Segoe UI',system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:40px 28px 72px}h1{font-size:30px;margin:0 0 4px}h2{font-size:20px;margin:38px 0 10px;padding-bottom:6px;border-bottom:1px solid #c6d0d9}.sub{color:#5c6874;margin:0 0 8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #e4e9ee;vertical-align:top}th{width:34%;font-weight:600;color:#3d4a56}table.grid th{width:auto}table.grid td,table.grid th{font-variant-numeric:tabular-nums}td.num{text-align:right;font-variant-numeric:tabular-nums}.good{color:#1e6b3a;font-weight:600}.warn{color:#9b2c1f;font-weight:600}.note{background:#f4f7f9;border-left:3px solid #2f6f99;padding:10px 14px;margin:14px 0;color:#3d4a56}figure{margin:22px 0}figure img{width:100%;border:1px solid #c6d0d9}figcaption{color:#5c6874;font-size:13px;margin-top:6px}code{background:#f4f7f9;padding:1px 5px;border-radius:3px}</style>
 <main>
 <h1>cheburashka</h1>
-<p class="sub">Division report &middot; 2026-09-21 14:28</p>
+<p class="sub">Division report &middot; 2026-09-21 18:12</p>
 <h2>The model</h2>
 <table>
 <tr><th>Vertices</th><td>6,669</td></tr>
@@ -21,28 +21,28 @@
 <tr><th>Divided</th><td>V-rep (bounding cage)</td></tr>
 <tr><th>Pieces asked for</th><td>5</td></tr>
 <tr><th>Cells produced</th><td><span class="good">5</span></td></tr>
-<tr><th>Pieces kept</th><td>6</td></tr>
+<tr><th>Pieces kept</th><td>5</td></tr>
 <tr><th>Seed</th><td>7</td></tr>
 <tr><th>Voxel grid</th><td>96 &times; 90 &times; 34 = 293,760 voxels, 65,249 filled (22.2%), side 0.009375</td></tr>
-<tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed, 1 detached lump(s) kept as separate piece(s) - a cell clipped material not connected to the rest of it</td></tr>
+<tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
 <tr><th>Joints</th><td>dovetail cut into 3 of 6 shared faces, 3 left straight (the order needs them flat, or the junction is too thin to notch)</td></tr>
 </table>
 <h2>Time</h2>
 <table>
-<tr><th>Voxelise the model</th><td>122 ms</td></tr>
-<tr><th>Choose the cuts</th><td>879 ms</td></tr>
+<tr><th>Voxelise the model</th><td>112 ms</td></tr>
+<tr><th>Choose the cuts</th><td>837 ms</td></tr>
 <tr><th>Extract the pieces</th><td>1 ms</td></tr>
-<tr><th>Trim to the model</th><td>2,507 ms</td></tr>
+<tr><th>Trim to the model</th><td>2,421 ms</td></tr>
 <tr><th>Cut the joints</th><td>&mdash;</td></tr>
-<tr><th>Draw the planner pictures</th><td>508 ms</td></tr>
-<tr><th><b>Total</b></th><td><b>3,031 ms</b></td></tr>
+<tr><th>Draw the planner pictures</th><td>494 ms</td></tr>
+<tr><th><b>Total</b></th><td><b>2,928 ms</b></td></tr>
 </table>
 <h2>The pieces</h2>
 <table>
-<tr><th>Count</th><td>6</td></tr>
-<tr><th>Triangles, all pieces</th><td>16,720</td></tr>
-<tr><th>Largest / smallest side</th><td>0.5926 / 0.2421 &middot; spread 2.45&times;</td></tr>
-<tr><th>Volume, all pieces</th><td>0.0543729 &middot; <span class="good">99.98%</span> of the model</td></tr>
+<tr><th>Count</th><td>5</td></tr>
+<tr><th>Triangles, all pieces</th><td>16,154</td></tr>
+<tr><th>Largest / smallest side</th><td>0.5926 / 0.3229 &middot; spread 1.84&times;</td></tr>
+<tr><th>Volume, all pieces</th><td>0.0540494 &middot; <span class="good">99.39%</span> of the model</td></tr>
 </table>
 <table class="grid">
 <tr><th>#</th><th>origin X</th><th>origin Y</th><th>origin Z</th><th>size X</th><th>size Y</th><th>size Z</th><th>triangles</th><th>volume</th><th>% of model</th><th>closed</th></tr>
@@ -51,14 +51,13 @@
 <tr><td>2</td><td class="num">0.4881</td><td class="num">0.07923</td><td class="num">0.3675</td><td class="num">0.2504</td><td class="num">0.3316</td><td class="num">0.2662</td><td class="num">3,062</td><td class="num">0.0080936</td><td class="num">14.9</td><td>yes</td></tr>
 <tr><td>3</td><td class="num">0.4881</td><td class="num">0.3527</td><td class="num">0.359</td><td class="num">0.2306</td><td class="num">0.3229</td><td class="num">0.2568</td><td class="num">2,028</td><td class="num">0.0070368</td><td class="num">12.9</td><td>yes</td></tr>
 <tr><td>4</td><td class="num">0.4881</td><td class="num">0.6174</td><td class="num">0.3383</td><td class="num">0.4619</td><td class="num">0.3033</td><td class="num">0.3234</td><td class="num">3,300</td><td class="num">0.012471</td><td class="num">22.9</td><td>yes</td></tr>
-<tr><td>5</td><td class="num">0.6773</td><td class="num">0.6228</td><td class="num">0.4561</td><td class="num">0.2421</td><td class="num">0.05275</td><td class="num">0.05871</td><td class="num">566</td><td class="num">0.00032353</td><td class="num">0.595</td><td>yes</td></tr>
 </table>
 <h2>The assembly planner</h2>
 <table>
 <tr><th>Shared faces</th><td>6</td></tr>
-<tr><th>Neighbours per piece</th><td>0 to 3</td></tr>
+<tr><th>Neighbours per piece</th><td>2 to 3</td></tr>
 <tr><th>Order found</th><td><span class="good">yes</span></td></tr>
-<tr><th>Assembly order</th><td>5 (-X) → 4 (-X) → 3 (-X) → 2 (-X) → 1 (+X) → 0 (+X)</td></tr>
+<tr><th>Assembly order</th><td>4 (-X) → 3 (-X) → 2 (-X) → 1 (+X) → 0 (+X)</td></tr>
 </table>
 <div class="note"><b>assemblable under translational blocking; rotational/swept check pending</b><br>A division into boxes always has some piece free to leave, so a successful order here is expected and carries little information. The test starts to bite once joints restrict how pieces may move, or once a swept-volume check replaces straight-line blocking.</div>
 <h2>The planner, drawn</h2>

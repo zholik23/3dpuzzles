@@ -422,27 +422,31 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
             //
             // A genuinely separate part of the model (a detached ear, a tail
             // tip) is much larger than this and is still kept.
+            // A lump that cannot be welded to ANY piece is dropped, whatever
+            // its size.
+            //
+            // It used to be promoted to a piece of its own unless it was under
+            // 0.5% of the model. That threshold was a guess and it is brittle:
+            // on cheburashka the same lump measured 0.485% at four pieces (so
+            // it vanished) and cleared the line at five (so it appeared as the
+            // stray orange piece). Size was never the right question - a lump
+            // that touches nothing cannot be assembled into the puzzle no
+            // matter how large it is.
+            //
+            // It is reported with its volume so the loss is visible rather than
+            // silent; a big number here means the division put a cell across
+            // two disconnected parts of the model and wants a different seed or
+            // piece count.
             const double lumpVol = meshVolume(lump);
-            if (lumpVol < 0.005 * modelVol) {
-                ++r.noiseDropped;
-                r.discardedVolume += lumpVol;
-                r.problems << QStringLiteral("dropped an unattached lump of "
-                                             "volume %1 (%2% of the model) - it "
-                                             "could not be welded to any piece")
-                                  .arg(lumpVol, 0, 'g', 4)
-                                  .arg(100.0 * lumpVol / qMax(1e-30, modelVol),
-                                       0, 'f', 3);
-                continue;
-            }
-
-            PuzzlePiece stray;
-            stray.mesh = lump;
-            for (int a = 0; a < 3; ++a) {
-                stray.centre[a] = 0.5f * (lump.bmin[a] + lump.bmax[a]);
-                stray.size[a]   = lump.bmax[a] - lump.bmin[a];
-            }
-            kept.append(stray);
-            ++r.orphans;
+            ++r.noiseDropped;
+            r.discardedVolume += lumpVol;
+            r.problems << QStringLiteral("dropped an unattached lump of volume "
+                                         "%1 (%2% of the model) - it could not "
+                                         "be welded to any piece, so it cannot "
+                                         "be part of the puzzle")
+                              .arg(lumpVol, 0, 'g', 4)
+                              .arg(100.0 * lumpVol / qMax(1e-30, modelVol),
+                                   0, 'f', 3);
         }
     }
 

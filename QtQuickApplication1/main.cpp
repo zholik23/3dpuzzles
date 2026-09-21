@@ -24,32 +24,6 @@ int main(int argc, char *argv[])
     // process down through IRIT's default exit()-on-error handlers.
     IritGuard::installHandlers();
 
-    // TEMPORARY - diagnostic only, removed once the questions are answered.
-    //
-    //   QtQuickApplication1.exe <model> --selftest [pieceCount]
-    {
-        const QStringList a = QGuiApplication::arguments();
-        if (a.size() > 2 && a.at(2) == QStringLiteral("--selftest")) {
-            const int n = (a.size() > 3) ? a.at(3).toInt() : 4;
-
-            AppController c;
-            c.loadPath(a.at(1));
-            qInfo().noquote() << "LOADED  :" << c.status();
-            qInfo().noquote() << "DETAIL  :" << c.detail();
-            c.useBoundingCage();
-
-            qInfo().noquote() << "\n=== JOINTS OFF ===";
-            c.divideRandom(n);
-            qInfo().noquote() << "PIECES  :" << c.pieceCount();
-
-            qInfo().noquote() << "\n=== JOINTS ON ===";
-            c.setAddJoints(true);      // re-divides with the same seed
-            qInfo().noquote() << "JOINTS  :" << c.jointNote();
-            qInfo().noquote() << "PIECES  :" << c.pieceCount();
-            return 0;
-        }
-    }
-
     qmlRegisterType<MeshView>("PuzzleDivider", 1, 0, "MeshView");
     qmlRegisterUncreatableType<AppController>(
         "PuzzleDivider", 1, 0, "AppController",
