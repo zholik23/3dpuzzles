@@ -414,6 +414,27 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         }
 
         if (!joined) {
+            // A lump that belongs to nobody and is far too small to be a part
+            // of the model in its own right is debris - most often a dovetail
+            // tooth that was transferred across a cut and landed on material
+            // not connected to its new owner. Promoting that to a piece puts a
+            // loose tooth in the puzzle, which is never what was wanted.
+            //
+            // A genuinely separate part of the model (a detached ear, a tail
+            // tip) is much larger than this and is still kept.
+            const double lumpVol = meshVolume(lump);
+            if (lumpVol < 0.005 * modelVol) {
+                ++r.noiseDropped;
+                r.discardedVolume += lumpVol;
+                r.problems << QStringLiteral("dropped an unattached lump of "
+                                             "volume %1 (%2% of the model) - it "
+                                             "could not be welded to any piece")
+                                  .arg(lumpVol, 0, 'g', 4)
+                                  .arg(100.0 * lumpVol / qMax(1e-30, modelVol),
+                                       0, 'f', 3);
+                continue;
+            }
+
             PuzzlePiece stray;
             stray.mesh = lump;
             for (int a = 0; a < 3; ++a) {

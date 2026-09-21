@@ -12,7 +12,8 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 520
     color: "#20242b"
-    title: "Puzzle Divider — division without joints"
+    title: app.addJoints ? "Puzzle Divider — division with joints"
+                         : "Puzzle Divider — division without joints"
 
     // ---------- 3D VIEW ----------
     // MeshView is our own QQuickPaintedItem: it rasterises with a z-buffer, so
@@ -134,6 +135,26 @@ ApplicationWindow {
                     // Nothing to write until a division has run.
                     enabled: app.canSave
                     onClicked: saveDialog.open()
+                }
+                CheckBox {
+                    id: addJoints
+                    text: "Joints"
+                    // Off by default: cutting a pin and a hole per shared face is
+                    // a boolean per piece, so it roughly doubles the time a
+                    // division takes.
+                    checked: app.addJoints
+                    onToggled: app.addJoints = checked
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Cut a pin and matching hole on the faces the " +
+                                  "planner chooses, then test whether each piece " +
+                                  "can still turn far enough to seat. Toggling " +
+                                  "this re-runs the last division with the same " +
+                                  "layout."
+                    contentItem: Text {
+                        text: parent.text; color: "#ccc"
+                        leftPadding: parent.indicator.width + 4
+                        verticalAlignment: Text.AlignVCenter
+                    }
                 }
                 CheckBox {
                     id: spreadOut

@@ -1,18 +1,18 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>armadillo &mdash; division report</title>
+<title>cheburashka &mdash; division report</title>
 <style>body{margin:0;background:#fff;color:#141a20;font:15px/1.55 'Segoe UI',system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:40px 28px 72px}h1{font-size:30px;margin:0 0 4px}h2{font-size:20px;margin:38px 0 10px;padding-bottom:6px;border-bottom:1px solid #c6d0d9}.sub{color:#5c6874;margin:0 0 8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #e4e9ee;vertical-align:top}th{width:34%;font-weight:600;color:#3d4a56}table.grid th{width:auto}table.grid td,table.grid th{font-variant-numeric:tabular-nums}td.num{text-align:right;font-variant-numeric:tabular-nums}.good{color:#1e6b3a;font-weight:600}.warn{color:#9b2c1f;font-weight:600}.note{background:#f4f7f9;border-left:3px solid #2f6f99;padding:10px 14px;margin:14px 0;color:#3d4a56}figure{margin:22px 0}figure img{width:100%;border:1px solid #c6d0d9}figcaption{color:#5c6874;font-size:13px;margin-top:6px}code{background:#f4f7f9;padding:1px 5px;border-radius:3px}</style>
 <main>
-<h1>armadillo</h1>
-<p class="sub">Division report &middot; 2026-09-21 14:27</p>
+<h1>cheburashka</h1>
+<p class="sub">Division report &middot; 2026-09-21 14:28</p>
 <h2>The model</h2>
 <table>
-<tr><th>Vertices</th><td>49,990</td></tr>
-<tr><th>Triangles</th><td>99,976</td></tr>
-<tr><th>Bounding box</th><td>127 &times; 151.3 &times; 115.4</td></tr>
+<tr><th>Vertices</th><td>6,669</td></tr>
+<tr><th>Triangles</th><td>13,334</td></tr>
+<tr><th>Bounding box</th><td>0.9 &times; 0.8415 &times; 0.3234</td></tr>
 <tr><th>Watertight</th><td><span class="good">yes</span></td></tr>
-<tr><th>Volume (divergence)</th><td>237926</td></tr>
-<tr><th>Volume (voxel fill)</th><td>237730 &middot; 99.9% of the divergence volume</td></tr>
+<tr><th>Volume (divergence)</th><td>0.0543816</td></tr>
+<tr><th>Volume (voxel fill)</th><td>0.0543989 &middot; 100% of the divergence volume</td></tr>
 </table>
 <div class="note">Two independent measures. The divergence integral counts every shell it is given, so a mesh with interior geometry reads high; the voxel fill uses parity down each column and reports what is actually solid. Them disagreeing is a fact about the model, not about the division.</div>
 <h2>The division</h2>
@@ -21,43 +21,44 @@
 <tr><th>Divided</th><td>V-rep (bounding cage)</td></tr>
 <tr><th>Pieces asked for</th><td>5</td></tr>
 <tr><th>Cells produced</th><td><span class="good">5</span></td></tr>
-<tr><th>Pieces kept</th><td>5</td></tr>
+<tr><th>Pieces kept</th><td>6</td></tr>
 <tr><th>Seed</th><td>7</td></tr>
-<tr><th>Voxel grid</th><td>81 &times; 96 &times; 73 = 567,648 voxels, 60,842 filled (10.7%), side 1.568</td></tr>
-<tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
-<tr><th>Joints</th><td>dovetail cut into 3 of 7 shared faces, 3 left straight (the order needs them flat, or the junction is too thin to notch), 1 failed (a dovetail boolean declined)</td></tr>
+<tr><th>Voxel grid</th><td>96 &times; 90 &times; 34 = 293,760 voxels, 65,249 filled (22.2%), side 0.009375</td></tr>
+<tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed, 1 detached lump(s) kept as separate piece(s) - a cell clipped material not connected to the rest of it</td></tr>
+<tr><th>Joints</th><td>dovetail cut into 3 of 6 shared faces, 3 left straight (the order needs them flat, or the junction is too thin to notch)</td></tr>
 </table>
 <h2>Time</h2>
 <table>
-<tr><th>Voxelise the model</th><td>245 ms</td></tr>
-<tr><th>Choose the cuts</th><td>162 ms</td></tr>
+<tr><th>Voxelise the model</th><td>122 ms</td></tr>
+<tr><th>Choose the cuts</th><td>879 ms</td></tr>
 <tr><th>Extract the pieces</th><td>1 ms</td></tr>
-<tr><th>Trim to the model</th><td>20,210 ms</td></tr>
+<tr><th>Trim to the model</th><td>2,507 ms</td></tr>
 <tr><th>Cut the joints</th><td>&mdash;</td></tr>
-<tr><th>Draw the planner pictures</th><td>585 ms</td></tr>
-<tr><th><b>Total</b></th><td><b>20,812 ms</b></td></tr>
+<tr><th>Draw the planner pictures</th><td>508 ms</td></tr>
+<tr><th><b>Total</b></th><td><b>3,031 ms</b></td></tr>
 </table>
 <h2>The pieces</h2>
 <table>
-<tr><th>Count</th><td>5</td></tr>
-<tr><th>Triangles, all pieces</th><td>108,252</td></tr>
-<tr><th>Largest / smallest side</th><td>109.7 / 46.82 &middot; spread 2.34&times;</td></tr>
-<tr><th>Volume, all pieces</th><td>237907 &middot; <span class="good">99.99%</span> of the model</td></tr>
+<tr><th>Count</th><td>6</td></tr>
+<tr><th>Triangles, all pieces</th><td>16,720</td></tr>
+<tr><th>Largest / smallest side</th><td>0.5926 / 0.2421 &middot; spread 2.45&times;</td></tr>
+<tr><th>Volume, all pieces</th><td>0.0543729 &middot; <span class="good">99.98%</span> of the model</td></tr>
 </table>
 <table class="grid">
 <tr><th>#</th><th>origin X</th><th>origin Y</th><th>origin Z</th><th>size X</th><th>size Y</th><th>size Z</th><th>triangles</th><th>volume</th><th>% of model</th><th>closed</th></tr>
-<tr><td>0</td><td class="num">-55.89</td><td class="num">-53.87</td><td class="num">-15.05</td><td class="num">54.68</td><td class="num">97.69</td><td class="num">72.75</td><td class="num">24,574</td><td class="num">51616</td><td class="num">21.7</td><td>yes</td></tr>
-<tr><td>1</td><td class="num">-1.206</td><td class="num">-54.22</td><td class="num">-14.53</td><td class="num">59.45</td><td class="num">109.7</td><td class="num">68.55</td><td class="num">26,334</td><td class="num">58371</td><td class="num">24.5</td><td>yes</td></tr>
-<tr><td>2</td><td class="num">-63.5</td><td class="num">43.82</td><td class="num">-57.71</td><td class="num">62.29</td><td class="num">53.26</td><td class="num">68.27</td><td class="num">22,748</td><td class="num">37475</td><td class="num">15.8</td><td>yes</td></tr>
-<tr><td>3</td><td class="num">-44.92</td><td class="num">43.82</td><td class="num">0.9654</td><td class="num">43.71</td><td class="num">46.82</td><td class="num">38.45</td><td class="num">7,520</td><td class="num">31199</td><td class="num">13.1</td><td>yes</td></tr>
-<tr><td>4</td><td class="num">-1.206</td><td class="num">43.82</td><td class="num">-48.93</td><td class="num">64.72</td><td class="num">52.86</td><td class="num">88.31</td><td class="num">27,076</td><td class="num">59246</td><td class="num">24.9</td><td>yes</td></tr>
+<tr><td>0</td><td class="num">0.07055</td><td class="num">0.08299</td><td class="num">0.359</td><td class="num">0.4176</td><td class="num">0.5926</td><td class="num">0.2662</td><td class="num">4,634</td><td class="num">0.014123</td><td class="num">26</td><td>yes</td></tr>
+<tr><td>1</td><td class="num">0.05</td><td class="num">0.6174</td><td class="num">0.3383</td><td class="num">0.4381</td><td class="num">0.3034</td><td class="num">0.3227</td><td class="num">3,130</td><td class="num">0.012324</td><td class="num">22.7</td><td>yes</td></tr>
+<tr><td>2</td><td class="num">0.4881</td><td class="num">0.07923</td><td class="num">0.3675</td><td class="num">0.2504</td><td class="num">0.3316</td><td class="num">0.2662</td><td class="num">3,062</td><td class="num">0.0080936</td><td class="num">14.9</td><td>yes</td></tr>
+<tr><td>3</td><td class="num">0.4881</td><td class="num">0.3527</td><td class="num">0.359</td><td class="num">0.2306</td><td class="num">0.3229</td><td class="num">0.2568</td><td class="num">2,028</td><td class="num">0.0070368</td><td class="num">12.9</td><td>yes</td></tr>
+<tr><td>4</td><td class="num">0.4881</td><td class="num">0.6174</td><td class="num">0.3383</td><td class="num">0.4619</td><td class="num">0.3033</td><td class="num">0.3234</td><td class="num">3,300</td><td class="num">0.012471</td><td class="num">22.9</td><td>yes</td></tr>
+<tr><td>5</td><td class="num">0.6773</td><td class="num">0.6228</td><td class="num">0.4561</td><td class="num">0.2421</td><td class="num">0.05275</td><td class="num">0.05871</td><td class="num">566</td><td class="num">0.00032353</td><td class="num">0.595</td><td>yes</td></tr>
 </table>
 <h2>The assembly planner</h2>
 <table>
-<tr><th>Shared faces</th><td>7</td></tr>
-<tr><th>Neighbours per piece</th><td>2 to 3</td></tr>
+<tr><th>Shared faces</th><td>6</td></tr>
+<tr><th>Neighbours per piece</th><td>0 to 3</td></tr>
 <tr><th>Order found</th><td><span class="good">yes</span></td></tr>
-<tr><th>Assembly order</th><td>4 (-X) → 3 (+X) → 2 (+X) → 1 (-X) → 0 (+X)</td></tr>
+<tr><th>Assembly order</th><td>5 (-X) → 4 (-X) → 3 (-X) → 2 (-X) → 1 (+X) → 0 (+X)</td></tr>
 </table>
 <div class="note"><b>assemblable under translational blocking; rotational/swept check pending</b><br>A division into boxes always has some piece free to leave, so a successful order here is expected and carries little information. The test starts to bite once joints restrict how pieces may move, or once a swept-volume check replaces straight-line blocking.</div>
 <h2>The planner, drawn</h2>

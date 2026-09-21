@@ -191,9 +191,7 @@ that is subtly the wrong scale rather than obviously broken.
 Each arrow is a one-way dependency. Nothing below reaches back up.
 
 ```
-   main.cpp ──► CLI modes (9 of them)
-        │
-        └────►  QML engine ──► main.qml ◄──► AppController
+   main.cpp ──► QML engine ──► main.qml ◄──► AppController
                                                   │
     ┌─────────────┬──────────────┬────────────────┼──────────────┐
     ▼             ▼              ▼                ▼              ▼
@@ -413,9 +411,9 @@ using `IritBooleanAND`. This is what turns a boxy cage piece into a piece with
 the model's real curved surface. Full treatment in §13.
 
 **The decisive check is volume, not appearance.** Trimmed pieces must sum to the
-*model*'s volume, not the cage's. `--cage` prints exactly that line, and it is
-how a genuine intersection was told from a union that happened to look
-plausible (the bug in §13).
+*model*'s volume, not the cage's. That comparison is how a genuine intersection
+was told from a union that happened to look plausible (the bug in §13). It is
+printed on the `BOOLEAN` log line and in the report's *Volume, all pieces* row.
 
 ---
 
@@ -1232,8 +1230,7 @@ After every division — any mode, through the cage or on the mesh — the GUI
 writes four PNGs beside the model, in
 `<model folder>/<model name>_planner/` — falling back to
 `Pictures/PuzzleDivider/<model name>_planner/` if that folder cannot be
-created. The status text shows where they went. `--cage MODEL N SEED --figures
-DIR` writes the same set from the command line.
+created. The status text shows where they went.
 
 **Shown in the app, automatically.** Tabs over the 3D view — *3D view · Pieces ·
 Graph · Blocking · Order* — display the last division's pictures, and *Open
@@ -1437,8 +1434,9 @@ removal all fall out of the same path.
 - **Explode** adds a fixed step along the offset direction as well as the offset
   itself, or pieces near the centre barely move.
 - `setFixedBounds` pins the camera to a given box instead of fitting it to what
-  is loaded — needed so that `--shot model`, `--shot cells` and `--shot pieces`
-  register pixel-for-pixel and can be overlaid.
+  is loaded, so separate renders of the same division — the model, the cells,
+  the pieces — register pixel-for-pixel and can be overlaid. `PlannerFigure`
+  depends on it: every figure in a set must share one camera.
 - **One camera, shared.** `camera()` and `project()` hold the projection maths,
   used by the rasteriser and by `pieceAnchors()`. `tintFor`, `background`,
   `pieceAnchors` and `axisOnScreen` are public so `PlannerFigure` can put a
@@ -1504,34 +1502,23 @@ to bring it back.
 
 # Part IV — using and extending it
 
-## 18. Command-line reference
+## 18. Running it
 
-Every stage is reachable without the UI, so a regression in one is never
-confused with a regression in another. `main.cpp:1216` dispatches; the first
-recognised flag wins.
+The app is the GUI. There was once a command-line mode — nine flags that drove
+each stage headlessly — and it was **removed on 2026-09-18**; `main.cpp` is now
+just the QML entry point. The last version with it is
+`main.cpp.before-cli-strip`, beside the source.
 
-| Flag | Purpose |
-|---|---|
-| `--probe FILE...` | loader only; exit code = number of failures |
-| `--render MODEL OUT.png` | rasteriser only |
-| `--field MODEL [RES ...]` | **voxel accuracy sweep.** Prints measured volume and error against the exact divergence volume at each resolution. Defaults to 8…192. This is how 96 was chosen by measurement rather than asserted |
-| `--cage MODEL [N] [SEED]` | **the full V-rep pipeline** — cage, voxel grid, BSP, region extraction, Elber §5 Boolean, per-piece volume and component report |
-| `--order MODEL [N] [SEED]` | split, then run the three planner stages and print the order |
-| `--shot MODEL N SEED WHAT OUT.png` | one render with the camera pinned to the cage box, so every `WHAT` registers with every other. `WHAT` = `model` \| `cells` \| `pieces` \| `cell:K` \| `piece:K` |
-| `--assemble MODEL [N] [SEED]` | `AssemblyDivider` Stage A: split + contact graph |
-| `--divide SOURCE MODE ARGS [--png OUT]` | trivariate division. `SOURCE` = a primitive (`Sphere`/`Torus`/`Cylinder`/`Cone`/`Box`), a `.itd`, or `cage:MODEL`. `MODE` = `uniform NU NV NW` \| `jitter NU NV NW PCT SEED` \| `fit BX BY BZ MAX` |
-| `--meshdivide MODEL MODE ARGS [--png OUT]` | mesh division. `MODE` = `uniform NX NY NZ` \| `jitter …` \| `balanced NX NY NZ` \| `fit BX BY BZ MAX` \| `bsp N SEED` |
-
-Sub-flags: `--png`, `--figures DIR` (planner figures, `--cage`), `--save PATH...`, `--split` (one file per piece),
-`--spread`, `--plan`, `--turn DEG`, `--joints`, `--pinmin`, `--sink`,
-`--noclear`, `--full`, `--stress`.
+What the CLI was for is now covered by the artefacts every division writes
+without being asked: four figures and a `report.html` carrying the model facts,
+the voxel grid, per-stage timings, every piece with its origin, size, volume and
+whether it is closed, and the planner's verdict (§14, §17).
 
 Environment variables:
 
 | Variable | Effect |
 |---|---|
-| `MATFIELD_RES` | overrides the voxel resolution in `--cage`, so the choice of 96 can be justified by measurement |
-| `BSP_LOG=1` | prints every cut candidate, its imbalance, and which one was chosen |
+| `BSP_LOG=1` | prints every cut candidate, its imbalance, and which one was chosen. Read by `splitLogging()` in `PuzzleDivider.cpp`, so it works from the GUI |
 
 Two report lines deserve care when reading them:
 
@@ -1558,8 +1545,8 @@ substantiates it, and how it was verified.
 | Division happens in the V-rep parameter domain, pieces are sub-trivariates | `PuzzleDivider::divideCells` → `IritTrivTVRegionFromTV` (`PuzzleDivider.cpp:330`) | pieces reassemble to the model volume; resolution sweep does not change the pieces |
 | Pieces carry the model's exact surface, not a stair-stepped one | `CageBoolean::intersectAll` → `IritBooleanAND` | trimmed volume = 100% of model volume on every sound model |
 | Cut selection is systematic, not a threshold | `CutCost` / `CutWeights` (`PuzzleDivider.cpp:595`) | `BSP_LOG=1` prints all 24 candidates and the chosen minimum |
-| The requested piece count is delivered exactly | material-aware acceptance (`:762-776`) | asked-vs-returned line in `--cage` |
-| Every piece is one connected lump | `MaterialField::isConnected` gate (`:795-812`) | `PARTS n of m` line in `--cage`; `multiPart` must be 0 |
+| The requested piece count is delivered exactly | material-aware acceptance (`:762-776`) | *Pieces asked for* vs *Cells produced* in `report.html` |
+| Every piece is one connected lump | `MaterialField::isConnected` gate (`:795-812`) | the `BOOLEAN` connectedness line; `multiPart` must be 0 |
 | Piece sizes are balanced | balance term | measured spread 175× → **1.91×** |
 | Voxels are an instrument, not the representation | `MaterialField` is discarded after the split | resolution 16→160 returns the same count, all connected |
 | An assembly order exists and is a witness | `Planner::extract` (`PlannerOrder.cpp:32`) | hand-verified on a cube |
@@ -1724,7 +1711,7 @@ Everything compiled into the app, in dependency order.
 | `PieceExport.h/.cpp` | 68 / 373 | write .itd / .obj / .stl, one object per piece, spread |
 | `MeshView.h/.cpp` | 153 / 612 | software z-buffer rasteriser, exploded view |
 | `AppController.h/.cpp` | 220 / 910 | the app model, exposed to QML |
-| `main.cpp` | 1300 | 9 CLI modes, then the QML engine |
+| `main.cpp` | 58 | the QML entry point: IRIT error handlers, type registration, engine |
 | `main.qml` | 336 | the UI |
 
 Related documents in `docs/`:

@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>happy &mdash; division report</title>
+<style>body{margin:0;background:#fff;color:#141a20;font:15px/1.55 'Segoe UI',system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:40px 28px 72px}h1{font-size:30px;margin:0 0 4px}h2{font-size:20px;margin:38px 0 10px;padding-bottom:6px;border-bottom:1px solid #c6d0d9}.sub{color:#5c6874;margin:0 0 8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #e4e9ee;vertical-align:top}th{width:34%;font-weight:600;color:#3d4a56}table.grid th{width:auto}table.grid td,table.grid th{font-variant-numeric:tabular-nums}td.num{text-align:right;font-variant-numeric:tabular-nums}.good{color:#1e6b3a;font-weight:600}.warn{color:#9b2c1f;font-weight:600}.note{background:#f4f7f9;border-left:3px solid #2f6f99;padding:10px 14px;margin:14px 0;color:#3d4a56}figure{margin:22px 0}figure img{width:100%;border:1px solid #c6d0d9}figcaption{color:#5c6874;font-size:13px;margin-top:6px}code{background:#f4f7f9;padding:1px 5px;border-radius:3px}</style>
+<main>
+<h1>happy</h1>
+<p class="sub">Division report &middot; 2026-09-20 17:01</p>
+<h2>The model</h2>
+<table>
+<tr><th>Vertices</th><td>49,251</td></tr>
+<tr><th>Triangles</th><td>98,601</td></tr>
+<tr><th>Bounding box</th><td>0.08132 &times; 0.198 &times; 0.08139</td></tr>
+<tr><th>Watertight</th><td><span class="warn">no</span> &mdash; volumes below are not trustworthy, and IRIT's booleans give garbage rather than an error on an open shell</td></tr>
+<tr><th>Volume (divergence)</th><td>0.000354176</td></tr>
+<tr><th>Volume (voxel fill)</th><td>0.00035373 &middot; 99.9% of the divergence volume</td></tr>
+</table>
+<div class="note">Two independent measures. The divergence integral counts every shell it is given, so a mesh with interior geometry reads high; the voxel fill uses parity down each column and reports what is actually solid. Them disagreeing is a fact about the model, not about the division.</div>
+<h2>The division</h2>
+<table>
+<tr><th>Mode</th><td>Random</td></tr>
+<tr><th>Divided</th><td>V-rep (bounding cage)</td></tr>
+<tr><th>Pieces asked for</th><td>3</td></tr>
+<tr><th>Cells produced</th><td><span class="good">3</span></td></tr>
+<tr><th>Pieces kept</th><td>3</td></tr>
+<tr><th>Seed</th><td>7</td></tr>
+<tr><th>Voxel grid</th><td>39 &times; 96 &times; 39 = 146,016 voxels, 39,407 filled (27%), side 0.002085</td></tr>
+<tr><th>Trim (Elber &sect;5)</th><td>3 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
+<tr><th>Joints</th><td>joints: 2 of 2 faces dovetailed (planner-chosen), 2 piece(s) cut, 2 boolean(s); order holds under dovetailed translational DBG - real collision check pending, thinnest feature 0.01 mm - UNDER 3 extrusions, will not print, 1 face(s) too small
+scale: this model is 0.229 across, so the 1.2 mm printability floor was lowered to 0.00275 to place a joint at all - the pins are correct geometry but will not print until the model is scaled up
+rotation: NOT TESTED - 2 piece(s) had a joint but every neighbour was dismissed on its bounding box, so no geometry was compared</td></tr>
+</table>
+<h2>Time</h2>
+<table>
+<tr><th>Voxelise the model</th><td>80 ms</td></tr>
+<tr><th>Choose the cuts</th><td>1,322 ms</td></tr>
+<tr><th>Extract the pieces</th><td>0 ms</td></tr>
+<tr><th>Trim to the model</th><td>12,821 ms</td></tr>
+<tr><th>Cut the joints</th><td>5,355 ms</td></tr>
+<tr><th>Draw the planner pictures</th><td>507 ms</td></tr>
+<tr><th><b>Total</b></th><td><b>18,688 ms</b></td></tr>
+</table>
+<h2>The pieces</h2>
+<table>
+<tr><th>Count</th><td>3</td></tr>
+<tr><th>Triangles, all pieces</th><td>103,578</td></tr>
+<tr><th>Largest / smallest side</th><td>0.1125 / 0.07278 &middot; spread 1.55&times;</td></tr>
+<tr><th>Volume, all pieces</th><td>0.000341812 &middot; <span class="warn">96.51%</span> of the model &mdash; not a meaningful check here: 1 piece(s) are open shells, and the divergence integral over an open shell is not a volume</td></tr>
+</table>
+<table class="grid">
+<tr><th>#</th><th>origin X</th><th>origin Y</th><th>origin Z</th><th>size X</th><th>size Y</th><th>size Z</th><th>triangles</th><th>volume</th><th>% of model</th><th>closed</th></tr>
+<tr><td>0</td><td class="num">-0.0461</td><td class="num">0.04976</td><td class="num">-0.04739</td><td class="num">0.08132</td><td class="num">0.0345</td><td class="num">0.08139</td><td class="num">21,756</td><td class="num">0.00010082</td><td class="num">28.5</td><td>yes</td></tr>
+<tr><td>1</td><td class="num">-0.04143</td><td class="num">0.08427</td><td class="num">-0.03811</td><td class="num">0.07278</td><td class="num">0.05099</td><td class="num">0.05437</td><td class="num">30,700</td><td class="num">9.0646e-05</td><td class="num">25.6</td><td>yes</td></tr>
+<tr><td>2</td><td class="num">-0.03424</td><td class="num">0.1353</td><td class="num">-0.03712</td><td class="num">0.07009</td><td class="num">0.1125</td><td class="num">0.06001</td><td class="num">51,122</td><td class="num">0.00015035</td><td class="num">42.4</td><td><span class="warn">no</span></td></tr>
+</table>
+<h2>The assembly planner</h2>
+<table>
+<tr><th>Shared faces</th><td>2</td></tr>
+<tr><th>Neighbours per piece</th><td>1 to 2</td></tr>
+<tr><th>Order found</th><td><span class="good">yes</span></td></tr>
+<tr><th>Assembly order</th><td>2 (-X) → 1 (-X) → 0 (-X)</td></tr>
+</table>
+<div class="note"><b>assemblable under translational blocking; rotational/swept check pending</b><br>A division into boxes always has some piece free to leave, so a successful order here is expected and carries little information. The test starts to bite once joints restrict how pieces may move, or once a swept-volume check replaces straight-line blocking.</div>
+<h2>The planner, drawn</h2>
+<figure><img src="1_pieces.png" alt="1_pieces.png">
+<figcaption>The pieces, pulled apart, numbered with the ids the planner uses.</figcaption></figure>
+<figure><img src="2_adjacency_graph.png" alt="2_adjacency_graph.png">
+<figcaption>Step 1 &mdash; every line joins two pieces that share a face, coloured by the axis that face is perpendicular to.</figcaption></figure>
+<figure><img src="3_blocking.png" alt="3_blocking.png">
+<figcaption>Step 2 &mdash; for each piece, which of the six straight moves are blocked, and by which neighbour.</figcaption></figure>
+<figure><img src="4_removal_order.png" alt="4_removal_order.png">
+<figcaption>Step 3 &mdash; the pieces taken off one at a time; reversed, this is the assembly order.</figcaption></figure>
+</main>

@@ -120,6 +120,8 @@ private:
     void runTrivCellDivision(const QVector<CellBox> &cells, const QString &note);
     void describePieces(const QString &note, int gridCells, const QString &warning);
     void applyJoints();
+    void cutCellDovetails();
+    void repeatLastDivision();
     void planAndDrawFigures();
     void writeDivisionReport();
 
@@ -152,7 +154,20 @@ private:
 
     JointParams m_joint;
     QString     m_jointNote;
+    QString     m_cellJointNote;   // set when the CUT itself carried the joint
     bool        m_addJoints = false;
+
+    // The last division, so toggling Joints can repeat it. Joints are cut into
+    // the meshes by a boolean during a division, so adding or removing them
+    // means running that division again - the pieces on screen cannot be
+    // patched in place. The layout seed is untouched, so the same cells return.
+    enum class LastDivision { None, Uniform, Random, BySize };
+    LastDivision m_lastKind      = LastDivision::None;
+    int          m_lastCounts[3] = { 3, 3, 2 };
+    int          m_lastPieces    = 24;
+    double       m_lastMaxSize   = 60.0;
+    int          m_lastMaxAxis   = 16;
+    bool         m_reDividing    = false;
 
     static constexpr double kModelFineNess = 20.0;
     static constexpr double kPieceFineNess = 12.0;

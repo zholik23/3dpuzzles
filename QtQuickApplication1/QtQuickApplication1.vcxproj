@@ -128,6 +128,7 @@
     <ClCompile Include="CutWarp.cpp" />
     <ClCompile Include="IritGuard.cpp" />
     <ClCompile Include="IritJoint.cpp" />
+    <ClCompile Include="JointRotation.cpp" />
     <ClCompile Include="IritMesh.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MeshData.cpp" />
@@ -153,9 +154,9 @@
     <ClInclude Include="PieceExport.h" />
     <ClInclude Include="IritSolid.h" />
     <ClInclude Include="CutWarp.h" />
-    <ClInclude Include="JointGeometry.h" />
     <ClInclude Include="IritGuard.h" />
     <ClInclude Include="IritJoint.h" />
+    <ClInclude Include="JointRotation.h" />
     <ClInclude Include="IritMesh.h" />
     <ClInclude Include="MeshDivider.h" />
     <ClInclude Include="PlannerBlocking.h" />

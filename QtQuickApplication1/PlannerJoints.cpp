@@ -189,4 +189,139 @@ QStringList explainOverConstrained(const Graph &g, const JointSet &joints,
     return out;
 }
 
+// ----------------------------------------------------------- dovetails ----
+
+DovetailBlocking::DovetailBlocking(const JointSet &joints,
+                                   const QVector<int> &slideAxis)
+    : m_joints(joints), m_slide(slideAxis)
+{
+}
+
+QString DovetailBlocking::name() const
+{
+    return QStringLiteral("dovetailed translational DBG");
+}
+
+QString DovetailBlocking::caveat() const
+{
+    return QStringLiteral("a mated dovetail slides along its own axis only and "
+                          "blocks withdrawal across the face; straight-line "
+                          "motion, no rotation, no swept volume - real "
+                          "collision check pending");
+}
+
+// Start from all six allowed and take them away. A mated dovetail leaves only
+// the two directions along its slide axis; two dovetails on different axes
+// leave none, which is why the chooser below refuses to create that case.
+DirMask DovetailBlocking::blocked(const Graph &g, int piece,
+                                  const QVector<bool> &present) const
+{
+    DirMask m = 0;
+    if (piece < 0 || piece >= g.incident.size())
+        return m;
+
+    DirMask allowed = 0x3Fu;
+
+    for (int ci : g.incident[piece]) {
+        const int other = g.otherSide(ci, piece);
+        if (other < 0 || other >= present.size() || !present[other])
+            continue;
+
+        m = withBlocked(m, g.directionFrom(ci, piece));
+
+        if (ci < m_joints.size() && m_joints[ci] &&
+            ci < m_slide.size() && m_slide[ci] >= 0) {
+            const int a = m_slide[ci];
+            allowed &= (1u << (a * 2)) | (1u << (a * 2 + 1));
+        }
+    }
+
+    return (m | (~allowed)) & 0x3Fu;
+}
+
+QVector<int> DovetailBlocking::blockers(const Graph &g, int piece, int dir,
+                                        const QVector<bool> &present) const
+{
+    QVector<int> out;
+    if (piece < 0 || piece >= g.incident.size())
+        return out;
+
+    for (int ci : g.incident[piece]) {
+        const int other = g.otherSide(ci, piece);
+        if (other < 0 || other >= present.size() || !present[other])
+            continue;
+
+        const int  toward = g.directionFrom(ci, piece);
+        const bool dove   = (ci < m_joints.size() && m_joints[ci] &&
+                             ci < m_slide.size() && m_slide[ci] >= 0);
+
+        if (toward == dir || (dove && dirAxis(dir) != m_slide[ci]))
+            if (!out.contains(other))
+                out.append(other);
+    }
+    return out;
+}
+
+// A dovetail may sit on a contact only when the piece that leaves first slides
+// out PARALLEL to that face. Put one on the face a piece pulls away from and it
+// can never leave - the exact opposite of where a peg belongs.
+//
+// One piece also cannot carry dovetails on two different slide axes: the second
+// would pin it solid. The first axis a piece is given wins, and later contacts
+// that disagree are left plain. That is what keeps "a dovetail everywhere"
+// from welding the puzzle shut.
+JointSet chooseDovetailsAlongOrder(const Graph &g, const Plan &plan,
+                                   QVector<int> *slideAxis)
+{
+    JointSet     joints(g.contactCount(), false);
+    QVector<int> slide(g.contactCount(), -1);
+
+    if (!plan.complete) {
+        if (slideAxis != nullptr)
+            *slideAxis = slide;
+        return joints;
+    }
+
+    QVector<int> step(g.pieceCount(), -1);
+    QVector<int> exitDir(g.pieceCount(), -1);
+    for (int i = 0; i < plan.removal.size(); ++i) {
+        const Step &s = plan.removal[i];
+        if (s.piece >= 0 && s.piece < step.size()) {
+            step[s.piece]    = i;
+            exitDir[s.piece] = s.dir;
+        }
+    }
+
+    QVector<int> pieceSlide(g.pieceCount(), -1);
+
+    for (int ci = 0; ci < g.contactCount(); ++ci) {
+        const Contact &c = g.contacts[ci];
+        if (c.lowSide < 0 || c.highSide < 0)
+            continue;
+        if (step[c.lowSide] < 0 || step[c.highSide] < 0)
+            continue;
+
+        const int first = (step[c.lowSide] < step[c.highSide]) ? c.lowSide
+                                                               : c.highSide;
+        const int e = exitDir[first];
+        if (e < 0)
+            continue;
+
+        const int a = dirAxis(e);
+        if (a == c.axis)
+            continue;                  // would block the withdrawal itself
+
+        if (pieceSlide[first] >= 0 && pieceSlide[first] != a)
+            continue;                  // that piece is already committed
+
+        joints[ci]        = true;
+        slide[ci]         = a;
+        pieceSlide[first] = a;
+    }
+
+    if (slideAxis != nullptr)
+        *slideAxis = slide;
+    return joints;
+}
+
 }
