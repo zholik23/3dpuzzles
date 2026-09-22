@@ -2,11 +2,10 @@
 //
 // Planner stage 4 - joints that follow the plan instead of fighting it.
 //
-// A face contact only stops a piece leaving through that face. A joint is far
-// stronger: while mated, a peg leaves the piece exactly one direction, and pegs
-// on two axes of the same piece leave none. So a pin on every shared face is not
-// a puzzle but a welded block - the order is decided first, and the joints placed
-// to suit it.
+// A face contact only stops a piece leaving through that face; a mated peg
+// leaves it exactly one direction, and pegs on two axes leave none. So a pin on
+// every shared face is a welded block, not a puzzle - the order is decided
+// first, and the joints placed to suit it.
 //
 // Still translational: no rotation, no swept volume.
 //
@@ -35,11 +34,10 @@ JointSet allContacts(const Graph &g);
 
 JointSet chooseAlongOrder(const Graph &g, const Plan &plan);
 
-// A dovetail is the opposite of a peg. A peg leaves its piece one way out -
-// straight back along the face normal. A mated dovetail forbids exactly that
-// and allows only sliding along its own axis, which lies IN the contact plane.
-// So a dovetail belongs on the faces a piece slides PAST, never on the face it
-// pulls away from.
+// A dovetail is the opposite of a peg: a peg allows only straight back out
+// along the face normal, a mated dovetail forbids exactly that and allows only
+// sliding in the contact plane. So a dovetail belongs on the faces a piece
+// slides PAST, never on the face it pulls away from.
 class DovetailBlocking : public BlockingModel {
 public:
     DovetailBlocking(const JointSet &joints, const QVector<int> &slideAxis);

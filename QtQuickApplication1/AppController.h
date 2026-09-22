@@ -121,6 +121,7 @@ private:
     void describePieces(const QString &note, int gridCells, const QString &warning);
     void applyJoints();
     void cutCellDovetails();
+    void trimPiecesToModel();
     void repeatLastDivision();
     void planAndDrawFigures();
     void writeDivisionReport();
@@ -157,10 +158,15 @@ private:
     QString     m_cellJointNote;   // set when the CUT itself carried the joint
     bool        m_addJoints = false;
 
-    // The last division, so toggling Joints can repeat it. Joints are cut into
-    // the meshes by a boolean during a division, so adding or removing them
-    // means running that division again - the pieces on screen cannot be
-    // patched in place. The layout seed is untouched, so the same cells return.
+    // The cells before any dovetail was cut, and whether any was: a dovetailed
+    // cut can cost a trim later with nothing at the cut stage to predict it, so
+    // trimPiecesToModel() can put these back and trim flat instead.
+    QVector<PuzzlePiece> m_preJointPieces;
+    bool                 m_cellsDovetailed = false;
+
+    // The last division, so toggling Joints can repeat it: joints are cut by a
+    // boolean during a division, so the pieces on screen cannot be patched in
+    // place. The layout seed is untouched, so the same cells return.
     enum class LastDivision { None, Uniform, Random, BySize };
     LastDivision m_lastKind      = LastDivision::None;
     int          m_lastCounts[3] = { 3, 3, 2 };

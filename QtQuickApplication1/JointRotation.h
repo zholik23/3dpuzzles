@@ -3,23 +3,15 @@
 // JointRotation - can a piece actually turn far enough to seat a rotate-to-engage
 // joint (a bayonet), given the pieces already in place?
 //
-// This replaces a test that could never say yes. AssemblyPlanner::rotationSweep
-// turns the four corners of the piece's BOUNDING BOX and unions them. A box's
-// corners sit at the half-diagonal, strictly further from the axis than its
-// half-width, so any nonzero rotation swings them outside the cell and into a
-// face-adjacent neighbour. Measured on a 24-piece cube: 1 degree still produced
-// 42 collisions, 90 degrees produced 45. That is a fact about boxes, not about
-// the pieces - and it rules out a bayonet by construction.
-//
-// A bayonet only works if the part that sweeps is rotationally symmetric about
-// the joint axis, so nothing swings outside. Deciding that needs the REAL
-// trimmed geometry, which is what this tests: rotate the piece's own mesh about
-// the joint axis, and at each sampled angle look for actual overlap with the
-// pieces already placed.
+// This replaces a test that could never say yes: the old one turned the corners
+// of the piece's BOUNDING BOX, which sit at the half-diagonal, so any nonzero
+// rotation swung them into a neighbour (measured on a 24-piece cube, 1 degree
+// gave 42 collisions and 90 degrees gave 45). Deciding this needs the REAL
+// trimmed geometry, so rotate the piece's own mesh and look for actual overlap
+// with the pieces already placed.
 //
 // Contact at rest is expected - neighbours share a face - so the moving piece is
-// pulled in by `clearance` before testing. Overlap means interpenetration beyond
-// that, not touching.
+// pulled in by `clearance` first. Overlap means interpenetration, not touching.
 //
 #include "IritJoint.h"
 #include "MeshData.h"

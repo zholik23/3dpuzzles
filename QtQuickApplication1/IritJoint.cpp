@@ -26,20 +26,11 @@ using IritSolid::closeLists;
 using IritSolid::signedVolume;
 static IritPrsrObjectStruct *meshToIrit(const MeshData &m)
 {
-    // INWARD, not outward. IRIT decides inside from outside by winding, and the
-    // sign is the opposite of the right-hand rule a divergence volume uses.
-    // Every boolean in CageBoolean.cpp converts both operands Inward and works
-    // (the cube regression sums to 100.0% of the model volume); this call site
-    // was the only boolean in the codebase asking for Outward, so the piece and
-    // the tool - which is built natively by IRIT, with IRIT's own convention -
-    // did not even agree with each other.
-    // Weld and orient BEFORE converting, exactly as CageBoolean does at its
-    // lines 166 and 176. fromMesh picks the winding from signedVolume(m) < 0,
-    // and that sign only means anything for a closed, consistently wound mesh.
-    // A trimmed piece arrives with unwelded seams and mixed triangle
-    // orientation, so for some pieces the sign comes out wrong and that piece
-    // alone converts inverted - which is how a hole GREW piece 5 by 0.245 while
-    // the other eleven booleans behaved. orientConsistently welds first.
+    // INWARD, not outward: IRIT decides inside from outside by winding, and the
+    // sign is the opposite of the right-hand rule. Weld and orient BEFORE
+    // converting - fromMesh reads the winding off signedVolume, which only means
+    // anything for a closed, consistently wound mesh, and a trimmed piece
+    // arrives with unwelded seams and mixed orientation.
     MeshData fixed = m;
     IritSolid::orientConsistently(&fixed);
 
@@ -156,21 +147,11 @@ void placementMatrix(const JointPlacement &j, const JointParams &p,
 
 // ------------------------------------------------------------ dovetail ----
 //
-// A trapezoidal prism, built straight into world coordinates. No unit tool and
-// no orientation matrix: a basis for six (normal, slide) combinations is easy
-// to get subtly wrong and impossible to see afterwards.
-//
-// The cross-section lies in (normal, cross) - narrow where it crosses the
-// contact plane, wide at full depth. That undercut is the lock: the socket
-// cannot lift off along the normal. The section is constant along the slide
-// axis, so the socket piece slides on from the edge of the face.
-//
-// The tail runs only part of the face (dtRunFrac) while the socket is cut the
-// full length and overshoots both ends - otherwise there is no open end to
-// slide in from and the joint could never be assembled.
-//
-// Winding does not have to be perfect here: meshToIrit welds and orients before
-// converting, which is the fix that stopped booleans inverting.
+// A trapezoidal prism built straight into world coordinates - no unit tool and
+// no orientation matrix. The cross-section lies in (normal, cross): narrow at
+// the contact plane, wide at full depth, and that undercut is the lock. The
+// tail runs only dtRunFrac of the face while the socket is cut the full length
+// and overshoots both ends, or there is no open end to slide in from.
 MeshData dovetailSolid(const JointPlacement &j, const JointParams &p,
                        bool socket)
 {
@@ -192,9 +173,8 @@ MeshData dovetailSolid(const JointPlacement &j, const JointParams &p,
     if (spanS <= 0.0 || spanT <= 0.0)
         return m;
 
-    // Sized by the room the face actually has, not by its bounding box: j.room
-    // is the half-width of a square solid on both pieces. Falling back to the
-    // span keeps the old friction pin working.
+    // Sized by the room the face actually has, not its bounding box: j.room is
+    // the half-width of a square solid on both pieces.
     const double faceMin = j.room > 0.0 ? qMin(qMin(spanS, spanT), 2.0 * j.room)
                                         : qMin(spanS, spanT);
     const double clr     = socket ? p.clearanceXY : 1.0;
@@ -225,13 +205,9 @@ MeshData dovetailSolid(const JointPlacement &j, const JointParams &p,
         }
     }
     else {
-        // Keep the tail INSIDE the material.
-        //
-        // This is what was deforming the model. Running the tail the full width
-        // of the shared face pushes both of its ends out through the model's
-        // surface, so the joint shows up as a lump on the silhouette. The tooth
-        // was never the problem - its length was. j.room is the half-width of a
-        // square that is solid on both pieces, so stay within it.
+        // Keep the tail inside the material: run it the full width of the
+        // shared face and both ends push out through the model's surface, which
+        // shows up as a lump on the silhouette.
         s0 = j.at[s] - half;
         s1 = j.at[s] + half;
     }
@@ -319,22 +295,12 @@ void doApply(void *v)
         if (tool == NULL)
             continue;
 
-        // Clip the TAIL to the model before unioning it on.
-        //
-        // Without this the union adds a lump wherever the tooth pokes past the
-        // model's surface, which is what deformed the silhouette. Elber's
-        // linear slice avoids the problem by making the CUT itself toothed, so
-        // nothing is ever added; clipping to the model gets the same outcome on
-        // this pipeline, and a tooth sitting over empty space intersects to
-        // nothing and is quietly skipped instead of welding on a floating lump.
-        //
-        // The model, NOT the neighbouring piece. The tail's root reaches back
-        // into its own piece on purpose, to give the union solid overlap to
-        // bite on; clipping to the neighbour shears that root off and leaves an
-        // operand exactly coplanar with the piece's own cut face, which is the
-        // case these booleans get wrong. Clipping to the model keeps the root,
-        // because the root is inside the piece and the piece is inside the
-        // model.
+        // Clip the TAIL to the model - not to the neighbouring piece. Without
+        // this the union adds a lump wherever the tooth pokes past the model's
+        // surface. It must be the model because the tail's root reaches back
+        // into its own piece to give the union solid overlap to bite on;
+        // clipping to the neighbour shears that root off and leaves an operand
+        // coplanar with the cut face, which these booleans get wrong.
         if (j.pin && j.slide >= 0 && c -> clip != NULL) {
             closeLists(tool);
 
@@ -388,12 +354,9 @@ void doBuildTool(void *v)
 
 }
 
-// A cut face as the trimmed mesh actually has it.
-//
-// The TRIANGLES lying on the contact plane, not their vertices. A flat cut face
-// has vertices only around its boundary and along tessellation seams, so binning
-// vertices tells you where the outline is and nothing about where the material
-// is - and material coverage is the whole question here.
+// A cut face as the trimmed mesh actually has it: the TRIANGLES on the contact
+// plane, not their vertices. A flat face has vertices only around its boundary,
+// which tells you where the outline is and nothing about the material.
 namespace {
 
 const double kFaceEpsFrac = 1e-3;   // "on the plane", relative to piece size
@@ -540,14 +503,9 @@ struct CutCtx {
 };
 
 // How many polygons an object carries, or -1 if it is not a polygon object.
-//
-// This is the honest test for "did that boolean actually do anything". A
-// pointer comparison is not: when the operands do not intersect, IRIT prints
-// "failed to intersect, first object returned" and hands back a COPY - a new
-// pointer with identical contents. Comparing volumes is not either; that was
-// tried and measured nonsense, because the before is a raw cell box and the
-// after is a re-tessellated boolean result. Polygon count is structural and
-// survives both problems.
+// The honest test for "did that boolean do anything": a pointer comparison is
+// not, because IRIT hands back a COPY of the first object when the operands do
+// not intersect, and a volume comparison measures re-tessellation noise.
 int polyCount(const IritPrsrObjectStruct *o)
 {
     if (o == NULL || !IRIT_PRSR_IS_POLY_OBJ(o))
@@ -563,11 +521,8 @@ void doCut(void *v)
 {
     CutCtx *c = static_cast<CutCtx *>(v);
 
-    // A FRESH tool per boolean. Handing the same object to both operations and
-    // then freeing it drops the reference count twice - IRIT says "Free an
-    // object with ref. count that is negative!" - because a boolean may take
-    // over parts of its operands rather than copying them. doApply above builds
-    // its tool per placement for exactly this reason.
+    // A FRESH tool per boolean: a boolean may take parts of its operands over
+    // rather than copying them, so reusing one tool double-frees it.
     IritPrsrObjectStruct
         *t1 = meshToIrit(*c -> tooth);
     if (t1 != NULL) {
@@ -585,15 +540,9 @@ void doCut(void *v)
             c -> okTail = true;
         }
 
-        // KNOWN: this run prints exactly two "Free an object with ref. count
-        // that is negative!" per cut - one per boolean - and they are ours;
-        // logs from before cutDovetail existed show none. Measured, so it is
-        // not guesswork: leaving the superseded tail/socket unfreed changed the
-        // count by zero, which rules those out. That leaves this free of the
-        // TOOL as the suspect - the boolean appears to take the tool's lists
-        // over rather than copy them. Not chased further because the geometry
-        // is correct either way (both models cut and trim with 0 failures) and
-        // IRIT raises this defensively rather than corrupting the heap.
+        // KNOWN: two "Free an object with ref. count that is negative!" per
+        // cut, one per boolean. Measured to this free of the TOOL - the boolean
+        // appears to take its lists over. Geometry is correct either way.
         IritPrsrFreeObject(t1);
     }
 
@@ -603,13 +552,10 @@ void doCut(void *v)
         closeLists(c -> socket);
         closeLists(t2);
 
-        // The one that matters. On spot.obj this subtraction silently does
-        // nothing for one contact - IRIT returns a copy of the socket - while
-        // the union still gives the tail its tooth. The tooth then exists on
-        // both sides, and the spare copy has nothing to attach to, so the trim
-        // leaves it as an extra tooth-shaped piece. Requiring the polygon count
-        // to change refuses that cut outright, and cutDovetail then writes back
-        // neither side.
+        // The one that matters: on spot.obj this subtraction silently does
+        // nothing for one contact while the union still gives the tail its
+        // tooth, so the tooth exists twice and the spare survives the trim as a
+        // loose piece. Requiring the polygon count to change refuses the cut.
         const int beforeSocket = polyCount(c -> socket);
 
         IritPrsrObjectStruct
@@ -657,18 +603,10 @@ bool IritJoint::cutDovetail(MeshData *tail, MeshData *socket,
         return false;
     }
 
-    // Coplanar handling ON for the cut, restored the moment it returns.
-    //
-    // This cut guarantees coplanar faces: the tooth's root sits exactly on the
-    // contact plane, which is exactly the face of the piece it is unioned onto
-    // and of the piece it is subtracted from. Without the flag IRIT says so out
-    // loud - "Boolean: coplanar polygons detected. Enable COPLANAR state." on
-    // armadillo - and the result is unreliable.
-    //
-    // Set and restored OUT HERE, not inside doCut: a fatal Bool_lib error
-    // longjmps out of the guarded call, which would skip a restore placed
-    // inside it and leave the flag set for every later boolean in the run.
-    // CageBoolean brackets its own AND the same way.
+    // Coplanar handling ON for the cut: the tooth's root sits exactly on the
+    // contact plane, and without the flag the result is unreliable. Set and
+    // restored OUT HERE, not inside doCut - a fatal Bool_lib error longjmps out
+    // and would skip a restore placed inside, leaving the flag set.
     const int oldCoplanar = IritBoolSetHandleCoplanarPoly(TRUE);
     const bool ran = IritGuard::run(&c, doCut);
     IritBoolSetHandleCoplanarPoly(oldCoplanar);
@@ -686,36 +624,16 @@ bool IritJoint::cutDovetail(MeshData *tail, MeshData *socket,
             IritSolid::orientConsistently(&outTail);
             IritSolid::orientConsistently(&outSocket);
 
-            // Both sides must move, or neither is kept.
-            //
-            // A dovetail MOVES material: the tail gains exactly what the socket
-            // loses. If the subtraction quietly did nothing, the tail still
-            // gained the tooth and the tooth now exists twice - which is how an
-            // extra, tooth-shaped piece appeared in spot.obj (5 pieces with
-            // joints on, 4 with them off). Refusing the whole cut leaves both
-            // pieces untouched and the face simply stays flat.
+            // Both sides must move, or neither is kept: a dovetail MOVES
+            // material, so if the subtraction quietly did nothing the tooth
+            // exists twice and the spare becomes a loose piece.
             const double vTailAfter   = std::fabs(IritSolid::signedVolume(outTail));
             const double vSocketAfter = std::fabs(IritSolid::signedVolume(outSocket));
 
-            // NO volume test here, deliberately.
-            //
-            // One was tried: require the tail to gain and the socket to lose,
-            // on the theory that IRIT returning a copy of the first object
-            // ("failed to intersect") lets a tooth be added without being
-            // removed. Measured, the test is unusable - on spot a tail went
-            // +169% and its socket +200%, one socket +1222%; on cheburashka
-            // BOTH sides shrank 45-75%. A tooth is a fraction of a percent, so
-            // these numbers are not measuring the cut at all.
-            //
-            // The reason is that signedVolume only means anything for a closed,
-            // consistently wound solid, and the two values are not comparable:
-            // the "before" is the raw cell box, the "after" is a re-tessellated
-            // boolean result. Any threshold over that is guesswork, and it
-            // rejected every cut on three models with contradictory reasons.
-            //
-            // The duplicated-tooth artifact on spot.obj is therefore still
-            // open, and still needs a mechanism that is actually observed
-            // rather than inferred.
+            // NO volume test here, deliberately. One was tried and measured
+            // unusable: signedVolume only means anything for a closed,
+            // consistently wound solid, and "before" is a raw cell box while
+            // "after" is a re-tessellated boolean result.
             *tail   = outTail;
             *socket = outSocket;
         }
@@ -790,29 +708,17 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacementsFor(
         if (c.lowSide < 0 || c.highSide >= pieces.size())
             continue;
 
-        // Place the joint from the TRIMMED meshes, not from the cell boxes.
-        //
-        // Everything upstream - adjacencyOfBoxes, the contact graph, c.ext and
-        // c.depth - is computed on the original cell boxes, and CageBoolean
-        // never writes p0/p1 back after trimming a piece to the model. On a
-        // box-shaped model the two agree. On anything organic they do not: the
-        // centre of the box face can be thin material or no material at all,
-        // which is how a pin ends up standing proud on a curved surface with
-        // nothing to mate into.
+        // Place the joint from the TRIMMED meshes, not the cell boxes: the
+        // contact graph is computed on boxes and p0/p1 is never written back
+        // after the trim, so on anything organic the centre of the box face can
+        // be thin material or none at all.
         const MeshData &MA = pieces[c.lowSide].mesh;
         const MeshData &MB = pieces[c.highSide].mesh;
 
-        // The contact plane in WORLD coordinates, read off the meshes.
-        //
-        // c.plane cannot be used here. It is derived from p0/p1, and on the
-        // V-rep path those are the cell box in the TRIVARIATE'S PARAMETER
-        // DOMAIN: the bounding cage is IritTrivNSPrimBox -> IritCagdPrimPlaneSrf
-        // -> IritCagdBilinearSrf extruded, all bilinear/Bezier, so the domain
-        // is 0..1 while the geometry spans the model. Using a 0..1 coordinate
-        // as a world position is what put every pin in one cluster near the
-        // origin corner. The mesh path stores world boxes, so the two paths
-        // disagree; the trimmed meshes are world space in BOTH cases.
-        //
+        // The contact plane in WORLD coordinates, read off the meshes. c.plane
+        // cannot be used: on the V-rep path p0/p1 are in the trivariate's 0..1
+        // PARAMETER DOMAIN, and treating that as a world position clusters
+        // every pin near the origin. The meshes are world space on both paths.
         // A ends where B begins, so the shared plane is between them.
         const double plane = 0.5 * (double(MA.bmax[c.axis]) +
                                     double(MB.bmin[c.axis]));
@@ -847,13 +753,10 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacementsFor(
         const bool dove = (slideAxis != nullptr && ci < slideAxis->size() &&
                            slideAxis->at(ci) >= 0);
 
-        // Where on this face is there material on BOTH sides?
-        //
-        // The centroid is not good enough. On a concave face - an arm, a leg -
-        // it lands in a hole, and a tooth cut there joins nothing: it slices a
-        // lump off instead, which is what "piece 7 left 5 disconnected parts"
-        // was. So rasterise both faces and find the largest square that is
-        // solid on both.
+        // Where is there material on BOTH sides? The centroid is not good
+        // enough - on a concave face it lands in a hole, and a tooth cut there
+        // slices a lump off instead of joining. So rasterise both faces and
+        // find the largest square solid on both.
         const int G = 24;
         const double du = (hi0 - lo0) / G, dv = (hi1 - lo1) / G;
         if (du <= 0.0 || dv <= 0.0) {
@@ -888,14 +791,10 @@ QVector<QVector<JointPlacement> > IritJoint::planPlacementsFor(
         const double cu = lo0 + (bu + 0.5) * du,
                      cv = lo1 + (bv + 0.5) * dv;
 
-        // A ROW of teeth along the cut, the way Elber's linear slice repeats
-        // its trapeze - one tooth reads as a block stuck on the model, not as
-        // a joint. They march along the CROSS axis (the in-plane axis that is
-        // not the slide axis), inside the solid square so none of them reaches
-        // the model's surface.
-        //
-        // Each tooth is its own placement and so its own boolean: several
-        // disjoint shells in one operand is a case these booleans handle badly.
+        // A ROW of teeth along the cut, marching along the CROSS axis (the
+        // in-plane axis that is not the slide axis) inside the solid square.
+        // Each tooth is its own placement and so its own boolean - several
+        // disjoint shells in one operand goes badly.
         const int sAx = dove ? slideAxis->at(ci) : -1;
         const int tAx = (sAx < 0) ? -1 : ((u == sAx) ? v : u);
 
@@ -1085,10 +984,8 @@ bool IritJoint::apply(MeshData *mesh, const QVector<JointPlacement> &places,
         return false;
     }
 
-    // And orient the result, as CageBoolean does after its tessellate (line
-    // 215). The piece goes back into m_pieces and is read again by the next
-    // boolean, the volume check and the next division; handing any of them a
-    // mesh with mixed orientation restarts the problem above.
+    // Orient the result: the piece is read again by the next boolean and the
+    // next division, and mixed orientation restarts the inversion problem.
     IritSolid::orientConsistently(&out);
 
     *mesh = out;

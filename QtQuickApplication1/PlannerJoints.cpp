@@ -268,8 +268,7 @@ QVector<int> DovetailBlocking::blockers(const Graph &g, int piece, int dir,
 //
 // One piece also cannot carry dovetails on two different slide axes: the second
 // would pin it solid. The first axis a piece is given wins, and later contacts
-// that disagree are left plain. That is what keeps "a dovetail everywhere"
-// from welding the puzzle shut.
+// that disagree are left plain.
 JointSet chooseDovetailsAlongOrder(const Graph &g, const Plan &plan,
                                    QVector<int> *slideAxis)
 {

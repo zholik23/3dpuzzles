@@ -21,12 +21,9 @@
 #include <QDir>
 #include <QLocale>
 
-// LAST, and it must stay last. IritSolid.h pulls in inc_irit/irit_sm.h, which
-// #defines _mkdir; put it above <QDir> and QDir::_mkdir turns into a
-// redeclaration - "error C2535: member function already defined or declared".
-// The same rule is written at the top of CadLoader.cpp and PieceExport.cpp:
-// Qt headers first, IRIT headers after. Anything that includes an IRIT header
-// belongs down here, not up with the project headers.
+// LAST, and it must stay last: IritSolid.h pulls in irit_sm.h, which #defines
+// _mkdir, and above <QDir> that makes QDir::_mkdir a redeclaration (C2535).
+// Qt headers first, IRIT headers after - same rule as CadLoader.cpp.
 #include "IritSolid.h"
 
 AppController::AppController(QObject *parent)
@@ -282,30 +279,7 @@ void AppController::runDivision(const DivisionSpec &spec)
     // ends up inside the model instead of stuck onto it.
     cutCellDovetails();
 
-    if (!m_sourceMesh.isEmpty()) {
-        stageTimer.restart();
-        const CageBoolean::Result br =
-            CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
-        m_stats.msTrim = stageTimer.elapsed();
-        for (const QString &line : CageBoolean::describe(br))
-            qDebug().noquote() << line;
-        // Orphans are reported because they are what a "floating fragment" in
-        // the viewport actually is: a cell whose intersection with the model
-        // came out in disconnected lumps, and the spare lump could not be
-        // welded into any neighbour without making that piece two solids, so it
-        // was kept as a piece of its own. Measured with joints off and on - the
-        // count is identical, so it is the division doing this, not the joints.
-        m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
-                                       "cell(s) dropped, %3 failed%4")
-                            .arg(br.intersected).arg(br.dropped).arg(br.failed)
-                            .arg(br.orphans > 0
-                                     ? QStringLiteral(", %1 detached lump(s) kept "
-                                                      "as separate piece(s) - a "
-                                                      "cell clipped material not "
-                                                      "connected to the rest of it")
-                                           .arg(br.orphans)
-                                     : QString());
-    }
+    trimPiecesToModel();
 
     planAndDrawFigures();
 
@@ -395,6 +369,76 @@ void AppController::runMeshDivision(const MeshDivisionSpec &spec, const MeshData
     emit statusChanged();
 }
 
+// The trim, plus the guarantee that a piece is never handed back as its
+// un-trimmed cage box.
+//
+// A dovetailed cut can leave IRIT unable to finish a later trim, and it does so
+// INTERMITTENTLY: measured on cheburashka at 5 pieces, the same binary, model
+// and seed cut the same 3 of 6 faces every run with no cut failure, yet one run
+// in three still failed to trim a piece. Nothing at the cut stage separates the
+// good runs from the bad, so the check lives here instead - if the trim failed
+// and the cuts carried dovetails, restore the flat cells and trim again.
+void AppController::trimPiecesToModel()
+{
+    if (m_sourceMesh.isEmpty())
+        return;
+
+    QElapsedTimer stageTimer;
+    stageTimer.start();
+    CageBoolean::Result br =
+        CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+
+    if (br.failed > 0 && m_cellsDovetailed && !m_preJointPieces.isEmpty()) {
+        qWarning().noquote()
+            << QStringLiteral("TRIM failed on %1 piece(s) after dovetailed cuts"
+                              " - restoring the flat cells and trimming again")
+                   .arg(br.failed);
+
+        // Kept only if the retry does better, so dovetails are never discarded
+        // for nothing.
+        const QVector<PuzzlePiece> dovetailed = m_pieces;
+
+        m_pieces = m_preJointPieces;
+        const CageBoolean::Result flat =
+            CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
+
+        if (flat.failed < br.failed) {
+            m_cellJointNote =
+                QStringLiteral("dovetails abandoned after the trim - every cut "
+                               "succeeded, but IRIT then failed to trim %1 "
+                               "piece(s) back to the model, which would have "
+                               "left them as raw boxes; the pieces were "
+                               "re-divided with flat cuts instead")
+                    .arg(br.failed);
+            qWarning().noquote() << m_cellJointNote;
+            br = flat;
+            m_cellsDovetailed = false;
+        } else {
+            // Flat cuts did no better, so the dovetails are not what broke the
+            // trim. Put them back and let the report say the piece failed.
+            m_pieces = dovetailed;
+        }
+    }
+
+    m_stats.msTrim = stageTimer.elapsed();
+    for (const QString &line : CageBoolean::describe(br))
+        qDebug().noquote() << line;
+    // An orphan is what a "floating fragment" in the viewport actually is: a
+    // cell that clipped the model into disconnected lumps, where the spare
+    // could not be welded into any neighbour. Measured identical with joints
+    // off and on, so it is the division doing this, not the joints.
+    m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
+                                   "cell(s) dropped, %3 failed%4")
+                        .arg(br.intersected).arg(br.dropped).arg(br.failed)
+                        .arg(br.orphans > 0
+                                 ? QStringLiteral(", %1 detached lump(s) kept "
+                                                  "as separate piece(s) - a "
+                                                  "cell clipped material not "
+                                                  "connected to the rest of it")
+                                       .arg(br.orphans)
+                                 : QString());
+}
+
 // The V-rep path for an explicit cell list - what the BSP produces - followed by
 // the same section 5 trim.
 void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
@@ -422,30 +466,7 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
     // ends up inside the model instead of stuck onto it.
     cutCellDovetails();
 
-    if (!m_sourceMesh.isEmpty()) {
-        stageTimer.restart();
-        const CageBoolean::Result br =
-            CageBoolean::intersectAll(&m_pieces, m_sourceMesh, kPieceFineNess);
-        m_stats.msTrim = stageTimer.elapsed();
-        for (const QString &line : CageBoolean::describe(br))
-            qDebug().noquote() << line;
-        // Orphans are reported because they are what a "floating fragment" in
-        // the viewport actually is: a cell whose intersection with the model
-        // came out in disconnected lumps, and the spare lump could not be
-        // welded into any neighbour without making that piece two solids, so it
-        // was kept as a piece of its own. Measured with joints off and on - the
-        // count is identical, so it is the division doing this, not the joints.
-        m_booleanNote = QStringLiteral("%1 trimmed to the model, %2 empty "
-                                       "cell(s) dropped, %3 failed%4")
-                            .arg(br.intersected).arg(br.dropped).arg(br.failed)
-                            .arg(br.orphans > 0
-                                     ? QStringLiteral(", %1 detached lump(s) kept "
-                                                      "as separate piece(s) - a "
-                                                      "cell clipped material not "
-                                                      "connected to the rest of it")
-                                           .arg(br.orphans)
-                                     : QString());
-    }
+    trimPiecesToModel();
 
     planAndDrawFigures();
 
@@ -775,9 +796,8 @@ void AppController::logCells(const QString &what, const QVector<CellBox> &cells)
                .arg(vmin > 1e-12 ? vmax / vmin : 0.0, 0, 'f', 2);
 
     // The cells are in the trivariate's PARAMETER space while the model is in
-    // world space, so both frames are printed together: a cell list that does
-    // not span the domain, or a domain that does not map onto the model, is
-    // invisible from volumes alone.
+    // world space, so both frames are printed together - a cell list that does
+    // not span the domain is invisible from volumes alone.
     double dom[6];
     m_triv.domain(dom);
     qDebug().noquote()
@@ -867,11 +887,10 @@ void AppController::setError(const QString &msg)
     emit statusChanged();
 }
 
-// Joints are cut into the pieces DURING a division, so this cannot just set a
-// flag: with pieces already on screen nothing would change and nothing would be
-// said, which reads as "joints are broken" rather than "press Divide". Repeat
-// the last division instead. m_layoutSeed is untouched, so the identical cells
-// come back and only the joints differ.
+// Joints are cut DURING a division, so this cannot just set a flag - with
+// pieces already on screen nothing would change, which reads as "joints are
+// broken". Repeat the last division; m_layoutSeed is untouched, so the same
+// cells come back and only the joints differ.
 void AppController::setAddJoints(bool on)
 {
     if (m_addJoints == on)
@@ -998,34 +1017,24 @@ void AppController::writeDivisionReport()
         m_figureNote += QStringLiteral(" \u00b7 report.html");
 }
 
-// Cut the DIVISION itself with a dovetail profile.
-//
-// Runs on the untrimmed cell boxes, before the pieces are trimmed to the model.
+// Cut the DIVISION itself with a dovetail profile, on the untrimmed cell boxes.
 // The same tooth is unioned onto one cell and subtracted from its neighbour, so
-// the shared face stops being flat and becomes a dovetail - and because that is
-// a re-cut and not an addition, the two cells still tile exactly the volume they
-// tiled before.
-//
-// Everything good follows from doing it here rather than after the trim:
-//   * after the trim every outer surface is model surface, so the joint cannot
-//     be seen from outside - the shape stays seamless;
-//   * the two sides are cut with the SAME solid, so there is no clearance gap;
-//   * the operands are boxes, which is the case IRIT's booleans handle best.
+// the shared face becomes a dovetail and the two cells still tile the same
+// volume. Doing it before the trim is what makes the joint seamless (every
+// outer surface ends up model surface), gap-free (one solid cuts both sides)
+// and reliable (box operands).
 void AppController::cutCellDovetails()
 {
     m_cellJointNote.clear();
+    m_preJointPieces.clear();
+    m_cellsDovetailed = false;
     if (!m_addJoints || m_pieces.size() < 2)
         return;
 
-    // Graph and directional blocking decide WHERE the profile goes.
-    //
-    // MEASURED, and the reason this is not a row of teeth on every face: one
-    // modest notch on the faces the removal order tolerates trims cleanly on
-    // both test models (cow 1.8s, 0 failures). Cutting a row of larger teeth
-    // into every contact instead took cow to 103s with a piece left as a raw
-    // box, and insetting those teeth from the corners made it worse still -
-    // every piece of both models failed to trim. IRIT's booleans do not
-    // survive that many interacting cuts at this tessellation.
+    // Graph and directional blocking decide WHERE the profile goes. One modest
+    // notch per tolerated face, not a row of teeth on every face: measured, a
+    // row took cow from 1.8s to 103s and left a piece as a raw box, and
+    // insetting the teeth failed the trim on every piece of both models.
     const Planner::Graph graph = Planner::build(m_pieces, 1e-6, 0.0);
     const Planner::TranslationalBlocking bare;
     const Planner::Plan plan = Planner::extract(graph, bare);
@@ -1045,13 +1054,9 @@ void AppController::cutCellDovetails()
     int cut = 0, failed = 0, skipped = 0;
     QString firstErr;
 
-    // Every piece as it stands before any cut, so the whole set of dovetails
-    // can be abandoned if one of them destabilises IRIT. See the check after
-    // the loop.
-    QVector<MeshData> preCut;
-    preCut.reserve(m_pieces.size());
-    for (const PuzzlePiece &pc : m_pieces)
-        preCut.append(pc.mesh);
+    // The cells kept whole for trimPiecesToModel(): a cut can look successful
+    // here and still cost a trim later, intermittently.
+    m_preJointPieces = m_pieces;
 
     for (int ci = 0; ci < graph.contactCount(); ++ci) {
         const Planner::Contact &c = graph.contacts[ci];
@@ -1112,29 +1117,17 @@ void AppController::cutCellDovetails()
         }
     }
 
-    // An assertion inside IRIT is not a cut that merely declined.
+    // A failed cut costs only ITS OWN contact, not the whole division.
     //
-    // Measured on bimba.obj: with joints off it trims 4 of 4 pieces cleanly,
-    // and with joints on one cut raises "assertion failed inside IRIT
-    // (unsupported configuration)". The cut itself is refused, but the abort
-    // leaves the kernel unable to finish the LATER trim, which then falls back
-    // to the cell box - the stray yellow box in the viewport.
-    //
-    // So once that happens, give up on dovetails for this division entirely and
-    // hand back the pieces exactly as they were. A correct division with flat
-    // cuts beats a jointed one with a raw box in it.
-    if (firstErr.contains(QStringLiteral("assertion"), Qt::CaseInsensitive)) {
-        for (int i = 0; i < m_pieces.size() && i < preCut.size(); ++i)
-            m_pieces[i].mesh = preCut[i];
-
-        m_cellJointNote =
-            QStringLiteral("dovetails abandoned - a cut hit an assertion inside "
-                           "IRIT, which leaves the kernel unable to finish the "
-                           "trim; the pieces were restored and divided with flat "
-                           "cuts instead");
-        qWarning().noquote() << m_cellJointNote;
-        return;
-    }
+    // This used to abandon every dovetail as soon as one cut failed, on the
+    // theory that a refused boolean leaves IRIT unable to finish a later trim.
+    // A/B measured on five models, one build: abandoning cost spot all 4 of its
+    // good cuts and armadillo all 3, and bought nothing - keeping the partial
+    // set trimmed with 0 failures and no cage box on every model. Where the
+    // trim does break (cow, bimba) trimPiecesToModel() catches it and re-trims
+    // flat, which is the guard that actually holds, so this one only threw
+    // joints away.
+    m_cellsDovetailed = (cut > 0);
 
     m_cellJointNote =
         QStringLiteral("dovetail cut into %1 of %2 shared faces%3%4")
@@ -1158,24 +1151,14 @@ void AppController::applyJoints()
     if (!m_addJoints)
         return;
 
-    // The dovetail belongs in the CUT, so this is where the old path ends.
+    // The dovetail belongs in the CUT, so this is where the old path ends -
+    // cutCellDovetails() has already run on the V-rep paths.
     //
-    // On the two V-rep paths cutCellDovetails() has already run, before the
-    // trim, which is the right place: the joint ends up inside the model and
-    // cannot show on the silhouette. The two mesh paths have no pre-trim stage,
-    // so it runs here instead - still a re-cut between the two pieces, just
-    // without the luxury of box operands.
-    //
-    // What is NOT done any more is the old "add a tail to a finished piece"
-    // step. It is what pushed lumps through the model's surface, and once it
-    // was emitting several teeth per face it also became pathologically slow -
-    // cow.obj went from 6 seconds to over 600.
     // Do NOT try to cut one here. This runs after the trim, and by then the
     // pieces are organic: the shared face is no longer a rectangle, so a tooth
-    // sized from the bounding boxes misses the material altogether on anything
-    // concave ("Boolean: objects in a subtraction operation failed to
-    // intersect" on armadillo). The dovetail is part of the CUT, and the cut
-    // only exists before the trim - which is the V-rep path.
+    // sized from the bounding boxes misses the material on anything concave.
+    // The old "add a tail to a finished piece" step is gone for the same
+    // reason - it pushed lumps through the surface and took cow 6s to 600s.
     m_jointNote = m_cellJointNote.isEmpty()
                       ? QStringLiteral("joints: none - the dovetail is cut into "
                                        "the division itself, which only happens "
@@ -1207,30 +1190,25 @@ void AppController::applyJoints()
         return;
     }
 
-    // Dovetails, not pegs. chooseDovetailsAlongOrder marks a contact only when
-    // the piece that leaves first slides PARALLEL to that face, and never hands
-    // one piece two different slide axes - either of those would weld the
-    // puzzle shut, because a mated dovetail blocks withdrawal across the face.
+    // Dovetails, not pegs: a mated dovetail blocks withdrawal ACROSS the face,
+    // so chooseDovetailsAlongOrder marks a contact only when the piece that
+    // leaves first slides parallel to it, and never gives one piece two slide
+    // axes. Either would weld the puzzle shut.
     QVector<int> slideAxis;
     const Planner::JointSet chosen =
         Planner::chooseDovetailsAlongOrder(graph, plan, &slideAxis);
 
-    // Replayed under the DOVETAIL model, which is the real test that it still
-    // comes apart once the joints are cut: replaying under the peg model would
-    // prove nothing about dovetails, since the two allow opposite directions.
+    // Replayed under the DOVETAIL model: the peg model would prove nothing
+    // here, since the two allow opposite directions.
     const Planner::DovetailBlocking jointed(chosen, slideAxis);
     QString   why;
     const int broken = Planner::replay(graph, jointed, plan, &why);
 
-    // The printability floor is an absolute millimetre figure: minPinThickness
-    // guarantees three extrusion widths. It is meaningless on a model that is
-    // not in millimetres, and worse than meaningless - it silently drops every
-    // face. Spot is 0.94 x 1.69 x 1.72 units, and the gate needs a shared face
-    // of 4.44 units, so nothing could ever be pegged.
-    //
-    // Cap the floor at a fraction of the model instead. On a real-scale model
-    // the millimetre figure still wins and nothing changes; on a unit-scale one
-    // the joint is cut and the note says the pins will not print as they stand.
+    // minPinThickness is an absolute millimetre figure (three extrusion
+    // widths), which silently drops every face on a model that is not in
+    // millimetres - spot is ~1 unit across and the gate wants 4.44. Cap it at a
+    // fraction of the model: real-scale models are unaffected, unit-scale ones
+    // get the joint plus a note that the pins will not print as they stand.
     JointParams joint = m_joint;
     double modelDiag = 0.0;
     {
@@ -1259,9 +1237,8 @@ void AppController::applyJoints()
         IritJoint::planPlacementsFor(m_pieces, graph, chosen, joint, &skipped,
                                      &slideAxis);
 
-    // What actually got cut, in model units. Without this there is no way to
-    // tell a dovetail that is too small to see from one that was never placed
-    // at all - both look like a flat face.
+    // What actually got cut, in model units: otherwise a dovetail too small to
+    // see is indistinguishable from one that was never placed.
     {
         int shown = 0;
         for (int i = 0; i < places.size() && shown < 8; ++i) {
@@ -1289,13 +1266,11 @@ void AppController::applyJoints()
     // and would overwrite anything assigned to it here.
     QString rotationNote;
 
-    // Can each piece actually turn far enough to seat a rotate-to-engage joint?
-    // Tested on the trimmed geometry and BEFORE the booleans below run: once a
-    // pin has been unioned on, the mesh is no longer the piece as it seats.
-    //
-    // The old test in AssemblyPlanner turned the piece's bounding box, whose
-    // corners sit at the half-diagonal, so it reported a collision at any angle
-    // and a bayonet could never pass it.
+    // Can each piece turn far enough to seat a rotate-to-engage joint? Tested
+    // on the trimmed geometry and BEFORE the booleans below run: once a pin is
+    // unioned on, the mesh is no longer the piece as it seats. (The old test
+    // turned the bounding box, whose corners sit at the half-diagonal, so it
+    // reported a collision at any angle.)
     {
         QVector<int> seatOrder;
         seatOrder.reserve(plan.assembly.size());
@@ -1318,9 +1293,7 @@ void AppController::applyJoints()
         for (const QString &line : JointRotation::describe(spin, seatOrder))
             qDebug().noquote() << line;
 
-        // "All clear" and "nothing to test" are not the same answer, and
-        // reporting the second as the first is how a rotation check quietly
-        // stops meaning anything.
+        // "All clear" and "nothing to test" are not the same answer.
         if (reallyTested == 0)
             rotationNote = QStringLiteral("rotation: NOT TESTED - no joint was "
                                           "placed, so nothing was turned");
@@ -1358,11 +1331,9 @@ void AppController::applyJoints()
             continue;
 
         // A pin ADDS material and a hole REMOVES it. Measuring that is the only
-        // thing that catches an inverted boolean: IRIT decides inside from
-        // outside by winding, and when it is wrong the call still reports
-        // success while computing the opposite operation. Checked per piece
-        // rather than per boolean, so it is only conclusive for a piece that
-        // carries one kind of feature - which is the common case.
+        // thing that catches an inverted boolean, which reports success while
+        // computing the opposite operation. Per piece, not per boolean, so it
+        // is only conclusive for a piece carrying one kind of feature.
         int pins = 0, holes = 0;
         for (const JointPlacement &jp : places[i]) {
             if (jp.pin)
@@ -1378,11 +1349,9 @@ void AppController::applyJoints()
 
         int     applied = 0, refused = 0;
         QString err;
-        // No clipTo. Clipping each tail against the model was tried and is
-        // worse: intersecting a small tooth with a 5k-100k triangle organic
-        // mesh fails inside Bool_lib ("failed to sort intersection list",
-        // "empty polygon object") and cost most of the joints. The tail is kept
-        // inside the material by its LENGTH instead - see dovetailSolid.
+        // No clipTo: intersecting a small tooth with a 5k-100k triangle organic
+        // mesh fails inside Bool_lib and cost most of the joints. The tail is
+        // kept inside the material by its LENGTH instead - see dovetailSolid.
         if (IritJoint::apply(&m_pieces[i].mesh, places[i], joint, &err,
                              &applied, &refused)) {
             const double vAfter = std::fabs(IritSolid::signedVolume(m_pieces[i].mesh));
@@ -1403,16 +1372,13 @@ void AppController::applyJoints()
             }
 
             // A joint cut where there is no material to attach it to leaves the
-            // piece in two parts. That is precisely what a "peg floating in
-            // space" is from the inside, and it is the one failure the volume
-            // check cannot see: the volume still rises, it just rises somewhere
-            // detached. The mid-face point can land in a void on a concave face.
+            // piece in two parts - what a "peg floating in space" is from the
+            // inside, and the one failure the volume check cannot see: the
+            // volume still rises, it just rises somewhere detached.
             const int parts = CageBoolean::components(m_pieces[i].mesh).size();
             if (parts > 1) {
-                // Put it back rather than ship a piece in two halves. The joint
-                // is lost, the piece is whole - which is the right trade: a
-                // puzzle missing a joint still assembles, a piece in pieces
-                // does not.
+                // Put it back rather than ship a piece in two halves: a puzzle
+                // missing a joint still assembles, a piece in pieces does not.
                 ++detached;
                 m_pieces[i].mesh = beforeMesh;
                 qWarning().noquote()
@@ -1433,9 +1399,8 @@ void AppController::applyJoints()
         }
     }
 
-    // Material should only have MOVED between pieces, never appeared. If the
-    // total shifts, a tail added something the model did not have - which is
-    // exactly the deformation the clip-to-mate step exists to prevent.
+    // Material should only have MOVED between pieces, never appeared: if the
+    // total shifts, a tail added something the model did not have.
     {
         double volAfter = 0.0;
         for (const PuzzlePiece &pc : m_pieces)
@@ -1465,9 +1430,8 @@ void AppController::applyJoints()
                                  "%4 boolean(s)")
                       .arg(Planner::countJoints(chosen))
                       .arg(graph.contactCount()).arg(done).arg(cuts);
-    // Name the model that was actually replayed, rather than a hardcoded
-    // string: this said "jointed translational DBG" for a while after the
-    // replay had already moved to the dovetail model.
+    // Name the model actually replayed, not a hardcoded string - this said
+    // "jointed translational DBG" long after the replay moved to dovetails.
     m_jointNote += (broken < 0)
         ? QStringLiteral("; order holds under %1 - real collision check pending")
               .arg(jointed.name())

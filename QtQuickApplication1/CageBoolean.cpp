@@ -37,14 +37,12 @@ void doAnd(void *v)
 }
 
 // A piece face sitting on the model's bounding box is coplanar with the model's
-// own outer face, and coplanar faces are what IRIT's booleans handle worst - a
-// whole piece can come back empty. Nudging only those outer vertices outward
-// cures it: the sliver added lies outside the solid, so model AND piece is
-// unchanged. Interior cut faces are left exactly where they are, or neighbouring
-// pieces would overlap instead of meeting.
-//
-// Same remedy as PuzBspGrowOuterFaces in ext_lib/PuzBspCore.c, which took a cube
-// split into 8 from 7 pieces at 88.3% of the model volume to 8 at 100%.
+// own outer face, which IRIT's booleans handle worst - a whole piece can come
+// back empty. Nudging only those outer vertices outward cures it: the sliver
+// added lies outside the solid, so model AND piece is unchanged. Interior cut
+// faces must be left alone, or neighbouring pieces overlap instead of meeting.
+// Same remedy as PuzBspGrowOuterFaces in ext_lib/PuzBspCore.c, which took a
+// cube split into 8 from 7 pieces at 88.3% of the volume to 8 at 100%.
 void growOuterFaces(MeshData *piece, const MeshData &model)
 {
     double ext = 0.0;
@@ -414,29 +412,13 @@ CageBoolean::Result CageBoolean::intersectAll(QVector<PuzzlePiece> *pieces,
         }
 
         if (!joined) {
-            // A lump that belongs to nobody and is far too small to be a part
-            // of the model in its own right is debris - most often a dovetail
-            // tooth that was transferred across a cut and landed on material
-            // not connected to its new owner. Promoting that to a piece puts a
-            // loose tooth in the puzzle, which is never what was wanted.
-            //
-            // A genuinely separate part of the model (a detached ear, a tail
-            // tip) is much larger than this and is still kept.
             // A lump that cannot be welded to ANY piece is dropped, whatever
-            // its size.
-            //
-            // It used to be promoted to a piece of its own unless it was under
-            // 0.5% of the model. That threshold was a guess and it is brittle:
-            // on cheburashka the same lump measured 0.485% at four pieces (so
-            // it vanished) and cleared the line at five (so it appeared as the
-            // stray orange piece). Size was never the right question - a lump
-            // that touches nothing cannot be assembled into the puzzle no
-            // matter how large it is.
-            //
-            // It is reported with its volume so the loss is visible rather than
-            // silent; a big number here means the division put a cell across
-            // two disconnected parts of the model and wants a different seed or
-            // piece count.
+            // its size: it cannot be assembled into the puzzle. Size was tried
+            // as the test and is brittle - on cheburashka the same lump
+            // measured 0.485% of the model at four pieces and 0.595% at five,
+            // so it vanished in one division and appeared as a stray piece in
+            // the next. Reported with its volume, because a big number here
+            // means a cell landed across two disconnected parts of the model.
             const double lumpVol = meshVolume(lump);
             ++r.noiseDropped;
             r.discardedVolume += lumpVol;

@@ -4,7 +4,7 @@
 <style>body{margin:0;background:#fff;color:#141a20;font:15px/1.55 'Segoe UI',system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:40px 28px 72px}h1{font-size:30px;margin:0 0 4px}h2{font-size:20px;margin:38px 0 10px;padding-bottom:6px;border-bottom:1px solid #c6d0d9}.sub{color:#5c6874;margin:0 0 8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #e4e9ee;vertical-align:top}th{width:34%;font-weight:600;color:#3d4a56}table.grid th{width:auto}table.grid td,table.grid th{font-variant-numeric:tabular-nums}td.num{text-align:right;font-variant-numeric:tabular-nums}.good{color:#1e6b3a;font-weight:600}.warn{color:#9b2c1f;font-weight:600}.note{background:#f4f7f9;border-left:3px solid #2f6f99;padding:10px 14px;margin:14px 0;color:#3d4a56}figure{margin:22px 0}figure img{width:100%;border:1px solid #c6d0d9}figcaption{color:#5c6874;font-size:13px;margin-top:6px}code{background:#f4f7f9;padding:1px 5px;border-radius:3px}</style>
 <main>
 <h1>spot</h1>
-<p class="sub">Division report &middot; 2026-09-21 18:11</p>
+<p class="sub">Division report &middot; 2026-09-22 13:21</p>
 <h2>The model</h2>
 <table>
 <tr><th>Vertices</th><td>2,930</td></tr>
@@ -19,45 +19,46 @@
 <table>
 <tr><th>Mode</th><td>Random</td></tr>
 <tr><th>Divided</th><td>V-rep (bounding cage)</td></tr>
-<tr><th>Pieces asked for</th><td>5</td></tr>
-<tr><th>Cells produced</th><td><span class="good">5</span></td></tr>
-<tr><th>Pieces kept</th><td>5</td></tr>
+<tr><th>Pieces asked for</th><td>6</td></tr>
+<tr><th>Cells produced</th><td><span class="good">6</span></td></tr>
+<tr><th>Pieces kept</th><td>6</td></tr>
 <tr><th>Seed</th><td>7</td></tr>
 <tr><th>Voxel grid</th><td>53 &times; 94 &times; 96 = 478,272 voxels, 125,490 filled (26.2%), side 0.01779</td></tr>
-<tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
-<tr><th>Joints</th><td>dovetail cut into 5 of 8 shared faces, 1 left straight (the order needs them flat, or the junction is too thin to notch), 2 failed (a dovetail boolean declined)</td></tr>
+<tr><th>Trim (Elber &sect;5)</th><td>6 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
+<tr><th>Joints</th><td>dovetails abandoned after the trim - every cut succeeded, but IRIT then failed to trim 1 piece(s) back to the model, which would have left them as raw boxes; the pieces were re-divided with flat cuts instead</td></tr>
 </table>
 <h2>Time</h2>
 <table>
-<tr><th>Voxelise the model</th><td>178 ms</td></tr>
-<tr><th>Choose the cuts</th><td>152 ms</td></tr>
+<tr><th>Voxelise the model</th><td>191 ms</td></tr>
+<tr><th>Choose the cuts</th><td>187 ms</td></tr>
 <tr><th>Extract the pieces</th><td>1 ms</td></tr>
-<tr><th>Trim to the model</th><td>1,049 ms</td></tr>
+<tr><th>Trim to the model</th><td>4,239 ms</td></tr>
 <tr><th>Cut the joints</th><td>&mdash;</td></tr>
-<tr><th>Draw the planner pictures</th><td>512 ms</td></tr>
-<tr><th><b>Total</b></th><td><b>1,589 ms</b></td></tr>
+<tr><th>Draw the planner pictures</th><td>442 ms</td></tr>
+<tr><th><b>Total</b></th><td><b>4,886 ms</b></td></tr>
 </table>
 <h2>The pieces</h2>
 <table>
-<tr><th>Count</th><td>5</td></tr>
-<tr><th>Triangles, all pieces</th><td>8,036</td></tr>
-<tr><th>Largest / smallest side</th><td>1.093 / 0.8105 &middot; spread 1.35&times;</td></tr>
-<tr><th>Volume, all pieces</th><td>0.718048 &middot; <span class="good">99.97%</span> of the model</td></tr>
+<tr><th>Count</th><td>6</td></tr>
+<tr><th>Triangles, all pieces</th><td>7,536</td></tr>
+<tr><th>Largest / smallest side</th><td>0.9431 / 0.7749 &middot; spread 1.22&times;</td></tr>
+<tr><th>Volume, all pieces</th><td>0.718259 &middot; <span class="good">100%</span> of the model</td></tr>
 </table>
 <table class="grid">
 <tr><th>#</th><th>origin X</th><th>origin Y</th><th>origin Z</th><th>size X</th><th>size Y</th><th>size Z</th><th>triangles</th><th>volume</th><th>% of model</th><th>closed</th></tr>
-<tr><td>0</td><td class="num">-0.3874</td><td class="num">-0.7338</td><td class="num">-0.6347</td><td class="num">0.7749</td><td class="num">1.093</td><td class="num">0.8869</td><td class="num">1,862</td><td class="num">0.20128</td><td class="num">28</td><td>yes</td></tr>
-<tr><td>1</td><td class="num">-0.4716</td><td class="num">0.2078</td><td class="num">-0.6689</td><td class="num">0.9431</td><td class="num">0.7458</td><td class="num">0.8385</td><td class="num">2,352</td><td class="num">0.1642</td><td class="num">22.9</td><td>yes</td></tr>
-<tr><td>2</td><td class="num">-0.3874</td><td class="num">-0.7368</td><td class="num">0.1696</td><td class="num">0.3745</td><td class="num">0.6694</td><td class="num">0.8105</td><td class="num">980</td><td class="num">0.092263</td><td class="num">12.8</td><td>yes</td></tr>
-<tr><td>3</td><td class="num">-0.01292</td><td class="num">-0.7368</td><td class="num">0.1696</td><td class="num">0.4004</td><td class="num">0.674</td><td class="num">0.811</td><td class="num">1,042</td><td class="num">0.10136</td><td class="num">14.1</td><td>yes</td></tr>
-<tr><td>4</td><td class="num">-0.3873</td><td class="num">-0.15</td><td class="num">0.1696</td><td class="num">0.7745</td><td class="num">0.4746</td><td class="num">0.8794</td><td class="num">1,800</td><td class="num">0.15895</td><td class="num">22.1</td><td>yes</td></tr>
+<tr><td>0</td><td class="num">-0.3874</td><td class="num">-0.7338</td><td class="num">-0.2057</td><td class="num">0.7749</td><td class="num">0.573</td><td class="num">0.3744</td><td class="num">804</td><td class="num">0.089986</td><td class="num">12.5</td><td>yes</td></tr>
+<tr><td>1</td><td class="num">-0.3849</td><td class="num">-0.1608</td><td class="num">-0.6381</td><td class="num">0.7697</td><td class="num">0.3732</td><td class="num">0.8068</td><td class="num">948</td><td class="num">0.091276</td><td class="num">12.7</td><td>yes</td></tr>
+<tr><td>2</td><td class="num">-0.4716</td><td class="num">0.2123</td><td class="num">-0.6689</td><td class="num">0.9431</td><td class="num">0.7413</td><td class="num">0.8376</td><td class="num">2,272</td><td class="num">0.1818</td><td class="num">25.3</td><td>yes</td></tr>
+<tr><td>3</td><td class="num">-0.3873</td><td class="num">-0.7368</td><td class="num">0.1687</td><td class="num">0.3716</td><td class="num">0.5751</td><td class="num">0.8091</td><td class="num">886</td><td class="num">0.087282</td><td class="num">12.2</td><td>yes</td></tr>
+<tr><td>4</td><td class="num">-0.01563</td><td class="num">-0.7368</td><td class="num">0.1687</td><td class="num">0.4029</td><td class="num">0.5751</td><td class="num">0.8097</td><td class="num">936</td><td class="num">0.094589</td><td class="num">13.2</td><td>yes</td></tr>
+<tr><td>5</td><td class="num">-0.3874</td><td class="num">-0.1617</td><td class="num">0.1687</td><td class="num">0.7749</td><td class="num">0.4864</td><td class="num">0.8803</td><td class="num">1,690</td><td class="num">0.17332</td><td class="num">24.1</td><td>yes</td></tr>
 </table>
 <h2>The assembly planner</h2>
 <table>
-<tr><th>Shared faces</th><td>8</td></tr>
-<tr><th>Neighbours per piece</th><td>2 to 4</td></tr>
+<tr><th>Shared faces</th><td>10</td></tr>
+<tr><th>Neighbours per piece</th><td>2 to 5</td></tr>
 <tr><th>Order found</th><td><span class="good">yes</span></td></tr>
-<tr><th>Assembly order</th><td>4 (-X) → 3 (-X) → 2 (+X) → 1 (-X) → 0 (-X)</td></tr>
+<tr><th>Assembly order</th><td>5 (-X) → 4 (-X) → 3 (+X) → 2 (-X) → 1 (-X) → 0 (-X)</td></tr>
 </table>
 <div class="note"><b>assemblable under translational blocking; rotational/swept check pending</b><br>A division into boxes always has some piece free to leave, so a successful order here is expected and carries little information. The test starts to bite once joints restrict how pieces may move, or once a swept-volume check replaces straight-line blocking.</div>
 <h2>The planner, drawn</h2>
