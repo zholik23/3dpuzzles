@@ -21,6 +21,7 @@ struct PuzzlePiece {
     MeshData mesh;
     float    centre[3] = { 0, 0, 0 };
     float    size[3]   = { 0, 0, 0 };
+    quint32  tint      = 0;     // 0 = the palette colour for i, j, k
 
     float largestSide() const;
 };

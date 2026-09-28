@@ -164,6 +164,8 @@ private:
     QVector<PuzzlePiece> m_preJointPieces;
     bool                 m_cellsDovetailed = false;
 
+    QVector<CellBox> m_worldCells;   // TEMPORARY - Stage 0 comparison
+
     // The last division, so toggling Joints can repeat it: joints are cut by a
     // boolean during a division, so the pieces on screen cannot be patched in
     // place. The layout seed is untouched, so the same cells return.

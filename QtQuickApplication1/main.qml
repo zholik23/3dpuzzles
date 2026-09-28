@@ -203,6 +203,19 @@ ApplicationWindow {
                     enabled: !app.dividesMesh
                     onClicked: app.showWholeModel()
                 }
+                Button {
+                    // Its own window: opens a saved trivariate (tvs_*.itd) and
+                    // checks the experiment's criteria on it, independent of
+                    // whatever this window has loaded.
+                    text: "Analyse puzzle…"
+                    onClicked: {
+                        analyzerWindow.show()
+                        analyzerWindow.raise()
+                    }
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Directional blocking graph, single key and level k, " +
+                                  "thickness, sizes - on a saved trivariate"
+                }
             }
 
             Label {
@@ -345,6 +358,8 @@ ApplicationWindow {
             }
         }
     }
+
+    AnalyzerWindow { id: analyzerWindow; visible: false }
 
     FileDialog {
         id: saveDialog

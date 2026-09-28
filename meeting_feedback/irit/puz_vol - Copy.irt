@@ -1,0 +1,214 @@
+#
+# Volumetric puzzles, joint-free, 2x2x2.  Based on Gershon Elber's puz_vol.irt.
+# Pins and holes removed; both grids set to 2x2x2.
+#
+# Writes: PuzzleVolEarth, PuzzleVolDuck (the deformed tiles), their trivariates
+# tv_sphere_r020 and tv_duck, and R sweeps of the trivariates (tvs_*). Needs duck3.itd in the current directory (load() does not search
+# IRIT_PATH).
+#
+
+i = IritState( "RandomInit", 1960 );
+
+#############################################################################
+#
+# Joint-free tile. Size 1.0 (not 0.99) so adjacent tiles touch without pins;
+# MaxEdgeLen 0.05 (not 0.2) because tdeform maps only the vertices.
+#
+PuzTile = function( Clr ): Tile:
+    Tile = MaxEdgeLen( triangl( box( vector( 0, 0, 0 ), 1.0, 1.0, 1.0 ),
+			        true ),
+		       0.05 ):
+    attrib( Tile, "rgb", Clr ):
+    return = Tile;
+
+#
+# Grid of plain tiles, of size (Nx x Ny x Nz).
+#
+PuzTilesGrid = function( Nx, Ny, Nz ): i: j: k:
+    return = nil():
+    for ( i = 1, 1, Nx,
+	for ( j = 1, 1, Ny,
+	    for ( k = 1, 1, Nz,
+		snoc( PuzTile( GenRandomColor() ) * txyz( i - 1, j - 1, k - 1 ),
+		      return ) ) ) );
+
+#
+# Move all interior control points of TV a bit, amount related to R.
+#
+RandomizeInterior = function( TV, R ):
+	Sizes: i: j: k: n: CPt: x: y: z: uLen: vLen: wLen:
+    return = TV * tx( 0 ):
+    Sizes = ffmsize( TV ):
+    uLen = nth( ffmsize( TV ), 1 ):
+    vLen = nth( ffmsize( TV ), 2 ):
+    wLen = nth( ffmsize( TV ), 3 ):
+    for ( k = 1, 1, wLen - 2,
+        for ( j = 1, 1, vLen - 2,
+	    for ( i = 1, 1, uLen - 2,
+	        n = k * uLen * vLen + j * uLen + i:
+		CPt = coord( TV, n ):
+
+		x = coord( CPt, 1 ):
+		y = coord( CPt, 2 ):
+		z = coord( CPt, 3 ):
+
+		if ( x != 0 && x != nth( Sizes, 1 ) - 1,
+		    x = x + random( -R, R ) ):
+		if ( y != 0 && y != nth( Sizes, 2 ) - 1,
+		    y = y + random( -R, R ) ):
+		if ( z != 0 && z != nth( Sizes, 3 ) - 1,
+		    z = z + random( -R, R ) ):
+
+		CPt = ctlpt( E3, x, y, z ):
+
+		return = tEditPt( return, CPt, i, j, k ) ) ) );
+
+#############################################################################
+#
+# Sphere puzzle: 2x2x2 tiles.
+#
+PuzGrid = PuzTilesGrid( 2, 2, 2 ) * sxyz( 1/2, 1/2, 1/2 );
+
+view( list( axes, PuzGrid ), 1 );
+
+s = surfPRev( cregion( pcircle( vector( 0, 0, 0 ), 1 ), 1.0, 3.0 )
+							        * rx( -90 ) );
+s = sReparam( sReparam( s, col, 0, 1 ), row, 0, 1 );
+
+TV = ruledTV( s * sxyz( 0.25, 0.25, 0.5 ), s );
+
+TV1 = trefine( trefine( TV, depth, false, list( 1/3, 2/3 ) ),
+	       row, false, list( 0.25, 0.75 ) );
+
+# Note: at R = 0.2 the map folds (interior det J < 0).
+TV1R = RandomizeInterior( TV1, 0.2 );
+
+save( "tv_sphere_r020", TV1R );
+
+view( list( TV1R, axes ), 1 );
+
+free( s );
+free( TV );
+
+EarthPuzzle = tdeform( PuzGrid, TV1R,
+		       1, 1, 1, FALSE, FALSE, FALSE, 0.0 );
+
+view( EarthPuzzle, 1 );
+
+save( "PuzzleVolEarth", EarthPuzzle );
+
+free( TV1R );
+free( PuzGrid );
+free( EarthPuzzle );
+
+#############################################################################
+#
+# Duck puzzle: 2x2x2 tiles.
+#
+PuzGridDuck = PuzTilesGrid( 2, 2, 2 ) * sxyz( 1/2, 1/2, 1/2 );
+
+view( list( axes, PuzGridDuck ), 1 );
+
+Duck = -load( "duck3" ); # Created by duck.irt
+
+meshsize( Duck, col );
+
+Crvs = nil();
+for ( i = 1, 1, meshsize( Duck, row ) - 2,
+    c = cMesh( Duck, row, i ):
+    if ( i == 1,
+        snoc( ScaleAroundCenter( c, 0.0 ) * txyz( -0.25, 0.0, -0.02 ), Crvs ),
+	if ( i == 2,
+            snoc( ScaleAroundCenter( c, 0.3 ) * tx( -0.05 ), Crvs ),
+	    if ( i == meshsize( Duck, row ) - 3,
+	        snoc( ScaleAroundCenter( c, 0.2 ) * tz( -0.05 ), Crvs ),
+	        if ( i == meshsize( Duck, row ) - 2,
+	            snoc( ScaleAroundCenter( c, 0.0 ) * tz( -0.1 ), Crvs ),
+	            snoc( ScaleAroundCenter( c, 0.4 ), Crvs ) ) ) ) ) );
+
+DuckIn = sFromCrvs( Crvs, 3, kv_open );
+
+TV = ruledTV( Duck, DuckIn );
+
+save( "tv_duck", TV );
+
+view( list( axes, TV ), 1 );
+
+free( Duck );
+free( DuckIn );
+free( i );
+free( c );
+free( Crvs );
+
+DuckPuzzle = tdeform( PuzGridDuck, TV,
+		      1, 1, 1, FALSE, FALSE, FALSE, 0.0 );
+
+view( DuckPuzzle, 1 );
+
+save( "PuzzleVolDuck", DuckPuzzle );
+
+free( PuzGridDuck );
+free( DuckPuzzle );
+
+#############################################################################
+#
+# R sweep: only the trivariates M o R are saved. The random generator is
+# re-seeded before every call, so each R scales one fixed field of offsets.
+#
+SweepCase = function( TV, R, TVName ): TVR: dmy:
+    dmy = IritState( "RandomInit", 1960 ):
+    TVR = RandomizeInterior( TV, R ):
+    save( TVName, TVR ):
+    return = TVR;
+
+#
+# Sphere. File name = R x 100 (r005 = 0.05). Folds from R = 0.15.
+#
+S000 = SweepCase( TV1, 0.000, "tvs_sphere_r000" );
+S002 = SweepCase( TV1, 0.025, "tvs_sphere_r002" );
+S005 = SweepCase( TV1, 0.050, "tvs_sphere_r005" );
+S007 = SweepCase( TV1, 0.075, "tvs_sphere_r007" );
+S010 = SweepCase( TV1, 0.100, "tvs_sphere_r010" );
+S012 = SweepCase( TV1, 0.125, "tvs_sphere_r012" );
+S015 = SweepCase( TV1, 0.150, "tvs_sphere_r015" );
+S017 = SweepCase( TV1, 0.175, "tvs_sphere_r017" );
+S020 = SweepCase( TV1, 0.200, "tvs_sphere_r020" );
+S025 = SweepCase( TV1, 0.250, "tvs_sphere_r025" );
+S030 = SweepCase( TV1, 0.300, "tvs_sphere_r030" );
+S040 = SweepCase( TV1, 0.400, "tvs_sphere_r040" );
+S050 = SweepCase( TV1, 0.500, "tvs_sphere_r050" );
+
+#
+# Duck. Refined in depth first: with only 2 control points across its
+# thickness RandomizeInterior has nothing to move. File name = R x 1000
+# (r005 = 0.005). Folds from R = 0.02.
+#
+DuckRef = trefine( TV, depth, false, list( 0.25, 0.5, 0.75 ) );
+
+D000 = SweepCase( DuckRef, 0.000, "tvs_duck_r000" );
+D000 = SweepCase( DuckRef, 0.0025, "tvs_duck_r0025" );
+D005 = SweepCase( DuckRef, 0.005, "tvs_duck_r005" );
+D007 = SweepCase( DuckRef, 0.0075, "tvs_duck_r0075" );
+D010 = SweepCase( DuckRef, 0.010, "tvs_duck_r010" );
+D015 = SweepCase( DuckRef, 0.015, "tvs_duck_r015" );
+D020 = SweepCase( DuckRef, 0.020, "tvs_duck_r020" );
+D025 = SweepCase( DuckRef, 0.025, "tvs_duck_r025" );
+D027 = SweepCase( DuckRef, 0.0275, "tvs_duck_r027" );
+D030 = SweepCase( DuckRef, 0.030, "tvs_duck_r030" );
+D040 = SweepCase( DuckRef, 0.040, "tvs_duck_r040" );
+D050 = SweepCase( DuckRef, 0.050, "tvs_duck_r050" );
+D075 = SweepCase( DuckRef, 0.075, "tvs_duck_r075" );
+D100 = SweepCase( DuckRef, 0.100, "tvs_duck_r100" );
+
+free( TV1 );
+free( TV );
+free( DuckRef );
+
+fnfree( "SweepCase" );
+
+#############################################################################
+
+fnfree( "PuzTile" );
+fnfree( "PuzTilesGrid" );
+fnfree( "RandomizeInterior" );
+varlist(0);

@@ -4,7 +4,7 @@
 <style>body{margin:0;background:#fff;color:#141a20;font:15px/1.55 'Segoe UI',system-ui,sans-serif}main{max-width:1000px;margin:0 auto;padding:40px 28px 72px}h1{font-size:30px;margin:0 0 4px}h2{font-size:20px;margin:38px 0 10px;padding-bottom:6px;border-bottom:1px solid #c6d0d9}.sub{color:#5c6874;margin:0 0 8px}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #e4e9ee;vertical-align:top}th{width:34%;font-weight:600;color:#3d4a56}table.grid th{width:auto}table.grid td,table.grid th{font-variant-numeric:tabular-nums}td.num{text-align:right;font-variant-numeric:tabular-nums}.good{color:#1e6b3a;font-weight:600}.warn{color:#9b2c1f;font-weight:600}.note{background:#f4f7f9;border-left:3px solid #2f6f99;padding:10px 14px;margin:14px 0;color:#3d4a56}figure{margin:22px 0}figure img{width:100%;border:1px solid #c6d0d9}figcaption{color:#5c6874;font-size:13px;margin-top:6px}code{background:#f4f7f9;padding:1px 5px;border-radius:3px}</style>
 <main>
 <h1>bimba</h1>
-<p class="sub">Division report &middot; 2026-09-22 13:56</p>
+<p class="sub">Division report &middot; 2026-09-22 16:12</p>
 <h2>The model</h2>
 <table>
 <tr><th>Vertices</th><td>112,455</td></tr>
@@ -25,17 +25,16 @@
 <tr><th>Seed</th><td>7</td></tr>
 <tr><th>Voxel grid</th><td>83 &times; 96 &times; 69 = 549,792 voxels, 146,576 filled (26.7%), side 0.003379</td></tr>
 <tr><th>Trim (Elber &sect;5)</th><td>5 trimmed to the model, 0 empty cell(s) dropped, 0 failed</td></tr>
-<tr><th>Joints</th><td>dovetails abandoned after the trim - every cut succeeded, but IRIT then failed to trim 1 piece(s) back to the model, which would have left them as raw boxes; the pieces were re-divided with flat cuts instead</td></tr>
 </table>
 <h2>Time</h2>
 <table>
-<tr><th>Voxelise the model</th><td>267 ms</td></tr>
-<tr><th>Choose the cuts</th><td>244 ms</td></tr>
+<tr><th>Voxelise the model</th><td>368 ms</td></tr>
+<tr><th>Choose the cuts</th><td>342 ms</td></tr>
 <tr><th>Extract the pieces</th><td>1 ms</td></tr>
-<tr><th>Trim to the model</th><td>85,713 ms</td></tr>
+<tr><th>Trim to the model</th><td>66,535 ms</td></tr>
 <tr><th>Cut the joints</th><td>&mdash;</td></tr>
-<tr><th>Draw the planner pictures</th><td>726 ms</td></tr>
-<tr><th><b>Total</b></th><td><b>86,460 ms</b></td></tr>
+<tr><th>Draw the planner pictures</th><td>1,166 ms</td></tr>
+<tr><th><b>Total</b></th><td><b>73,645 ms</b></td></tr>
 </table>
 <h2>The pieces</h2>
 <table>

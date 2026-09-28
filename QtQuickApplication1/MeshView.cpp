@@ -80,6 +80,8 @@ void MeshView::clearMesh()
 // when the grid changes size.
 QRgb MeshView::tintFor(const PuzzlePiece &piece)
 {
+    if (piece.tint != 0)
+        return piece.tint;
     const int h = piece.i * 5 + piece.j * 3 + piece.k;
     return kPalette[((h % kPaletteSize) + kPaletteSize) % kPaletteSize];
 }
@@ -170,6 +172,38 @@ void MeshView::setController(AppController *c)
             resetView();
         });
         setMesh(m_controller->mesh());
+    }
+    else {
+        clearMesh();
+    }
+    emit controllerChanged();
+}
+
+void MeshView::setAnalyzer(PuzzleAnalyzer *a)
+{
+    if (m_analyzer == a)
+        return;
+    if (m_analyzer != nullptr)
+        disconnect(m_analyzer, nullptr, this, nullptr);
+
+    m_analyzer = a;
+
+    if (m_analyzer != nullptr) {
+        // A new puzzle refits the camera; moving pieces does not. The bounds
+        // stay fixed to the puzzle with room for pulled-out pieces, so the view
+        // holds still while a group slides away.
+        connect(m_analyzer, &PuzzleAnalyzer::piecesChanged, this, [this] {
+            setPieces(m_analyzer->displayPieces());
+            float lo[3], hi[3];
+            if (m_analyzer->viewBounds(lo, hi))
+                setFixedBounds(lo, hi);
+            else
+                clearFixedBounds();
+            resetView();
+        });
+        connect(m_analyzer, &PuzzleAnalyzer::displayChanged, this, [this] {
+            setPieces(m_analyzer->displayPieces());
+        });
     }
     else {
         clearMesh();

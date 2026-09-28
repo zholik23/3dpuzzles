@@ -1,0 +1,75 @@
+{
+ "v": 4,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-09-26T09:55:00Z"
+ },
+ "title": "Interlocking by Curvature",
+ "order": [
+  "cover",
+  "reframe",
+  "dmap",
+  "statement",
+  "setup",
+  "rparam",
+  "dbgflow",
+  "test",
+  "normals",
+  "directions",
+  "groups",
+  "keylevel",
+  "verify",
+  "tool",
+  "jacobian",
+  "shape",
+  "headline",
+  "results",
+  "matrix",
+  "cuts",
+  "guard",
+  "pairs",
+  "knife",
+  "fold",
+  "division",
+  "scorecard",
+  "elber",
+  "oq1",
+  "oq2",
+  "next",
+  "qa1",
+  "qa2"
+ ],
+ "sections": {
+  "s1": {
+   "description": "The question, the reframing and the experimental setup",
+   "start": "cover"
+  },
+  "s2": {
+   "description": "How the DBG, the Jacobian and the shape criteria are computed and checked",
+   "start": "dbgflow"
+  },
+  "s3": {
+   "description": "The results: blocking table, mechanism, folding, division, scorecard",
+   "start": "headline"
+  },
+  "s4": {
+   "description": "Elber 2025 section 6 mapped to our plan, and the open questions",
+   "start": "elber"
+  },
+  "s5": {
+   "description": "The next step and backup answers to likely questions",
+   "start": "next"
+  }
+ },
+ "faces": {
+  "noto-sans-kr": {
+   "family": "Noto Sans KR",
+   "href": "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap"
+  },
+  "ibm-plex-mono": {
+   "family": "IBM Plex Mono",
+   "href": "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap"
+  }
+ },
+ "designSystems": []
+}

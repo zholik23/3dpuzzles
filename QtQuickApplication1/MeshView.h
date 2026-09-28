@@ -11,6 +11,7 @@
 //
 #include "AppController.h"
 #include "MeshData.h"
+#include "PuzzleAnalyzer.h"
 #include "PuzzleDivider.h"
 
 #include <QColor>
@@ -31,6 +32,9 @@ class MeshView : public QQuickPaintedItem {
     Q_PROPERTY(int   partCount READ partCount                    NOTIFY meshChanged)
     Q_PROPERTY(AppController *controller READ controller WRITE setController
                                                      NOTIFY controllerChanged)
+    // The analyser window's view: shows that analyser's pieces instead.
+    Q_PROPERTY(PuzzleAnalyzer *analyzer READ analyzer WRITE setAnalyzer
+                                                   NOTIFY controllerChanged)
 
 public:
     explicit MeshView(QQuickItem *parent = nullptr);
@@ -51,6 +55,9 @@ public:
 
     AppController *controller() const { return m_controller; }
     void setController(AppController *c);
+
+    PuzzleAnalyzer *analyzer() const { return m_analyzer; }
+    void setAnalyzer(PuzzleAnalyzer *a);
 
     qreal yaw()       const { return m_yaw; }
     qreal pitch()     const { return m_pitch; }
@@ -126,5 +133,6 @@ private:
     bool  m_showEdges = false;
 
     QPointF        m_lastMouse;
-    AppController *m_controller = nullptr;
+    AppController  *m_controller = nullptr;
+    PuzzleAnalyzer *m_analyzer   = nullptr;
 };

@@ -468,6 +468,54 @@ void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
 
     trimPiecesToModel();
 
+    // TEMPORARY - Stage 0: the identical cells down both paths, for comparison.
+    if (!m_sourceMesh.isEmpty() && !m_worldCells.isEmpty()) {
+        const double modelVol = std::fabs(IritSolid::signedVolume(m_sourceMesh));
+
+        double vrepVol = 0.0;
+        for (const PuzzlePiece &pc : m_pieces)
+            vrepVol += std::fabs(IritSolid::signedVolume(pc.mesh));
+
+        // buildBspCells works over wdom = {0..ext}, i.e. a MODEL-LOCAL frame
+        // with the origin at bmin, while MeshDivider clips in true world
+        // coordinates. Shift them or every cell misses the model.
+        QVector<CellBox> worldTrue;
+        worldTrue.reserve(m_worldCells.size());
+        for (const CellBox &w : m_worldCells) {
+            CellBox t;
+            for (int a = 0; a < 3; ++a) {
+                t.lo[a] = w.lo[a] + double(m_sourceMesh.bmin[a]);
+                t.hi[a] = w.hi[a] + double(m_sourceMesh.bmin[a]);
+            }
+            worldTrue.append(t);
+        }
+
+        QVector<PuzzlePiece> clipped;
+        QString clipWarn;
+        QElapsedTimer clipTimer;
+        clipTimer.start();
+        const bool clipOk = MeshDivider::divideCells(m_sourceMesh, worldTrue,
+                                                     &clipped, &clipWarn, 0.0);
+        const qint64 clipMs = clipTimer.elapsed();
+
+        double clipVol = 0.0;
+        for (const PuzzlePiece &pc : clipped)
+            clipVol += std::fabs(IritSolid::signedVolume(pc.mesh));
+
+        qInfo().noquote()
+            << QStringLiteral("COMPARE cells=%1 | VREP pieces=%2 vol=%3 ms=%4 "
+                              "| CLIP ok=%5 pieces=%6 vol=%7 ms=%8 | %9")
+                   .arg(m_worldCells.size())
+                   .arg(m_pieces.size())
+                   .arg(modelVol > 0.0 ? vrepVol / modelVol : 0.0, 0, 'f', 4)
+                   .arg(m_stats.msTrim)
+                   .arg(clipOk ? QStringLiteral("y") : QStringLiteral("n"))
+                   .arg(clipped.size())
+                   .arg(modelVol > 0.0 ? clipVol / modelVol : 0.0, 0, 'f', 4)
+                   .arg(clipMs)
+                   .arg(clipWarn.isEmpty() ? QStringLiteral("no warnings") : clipWarn);
+    }
+
     planAndDrawFigures();
 
     logCells(QStringLiteral("V-rep BSP cells in parameter space · ") + note, cells);
@@ -681,6 +729,7 @@ void AppController::divideRandom(int pieces)
             PuzzleDivider::buildBspCells(wdom, target, 0.35, m_layoutSeed, 0.0,
                                          field.isValid() ? &field : nullptr);
         m_stats.msSplit = stageTimer.elapsed();
+        m_worldCells = world;          // TEMPORARY - Stage 0 comparison
 
         QVector<CellBox> cells;
         cells.reserve(world.size());

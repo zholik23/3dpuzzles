@@ -1,0 +1,2004 @@
+[
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r000",
+  "R": 0,
+  "detJ": 0.2823,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 0.0,
+    "free": 2000,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 0.0,
+    "free": 2000,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 0.0,
+    "free": 2000,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 0.0,
+    "free": 2000,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 90.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 90.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 90.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 90.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 8.1,
+  "ratio": 2.704354189535309,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r002",
+  "R": 0.025,
+  "detJ": 0.2513,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 5.8,
+    "free": 1861,
+    "blocked": false,
+    "clr": 85.252
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 4.6,
+    "free": 1896,
+    "blocked": false,
+    "clr": 86.477
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 4.5,
+    "free": 1893,
+    "blocked": false,
+    "clr": 85.778
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 4.0,
+    "free": 1913,
+    "blocked": false,
+    "clr": 86.929
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 89.4,
+    "free": 14,
+    "blocked": false,
+    "clr": 0.838
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 91.8,
+    "free": 4,
+    "blocked": false,
+    "clr": 0.668
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 89.7,
+    "free": 9,
+    "blocked": false,
+    "clr": 0.583
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 90.4,
+    "free": 0,
+    "blocked": false,
+    "clr": 0.256
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   1
+  ],
+  "pclr": [
+   -1.0,
+   0.836,
+   -1.0,
+   0.568,
+   -1.0,
+   0.582,
+   -1.0,
+   0.172
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 10,
+  "smallest": "1",
+  "thin": 6.02,
+  "ratio": 2.7898686679174483,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r005",
+  "R": 0.05,
+  "detJ": 0.2219,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 11.4,
+    "free": 1730,
+    "blocked": false,
+    "clr": 80.768
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 8.9,
+    "free": 1794,
+    "blocked": false,
+    "clr": 83.025
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 8.8,
+    "free": 1791,
+    "blocked": false,
+    "clr": 81.762
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 7.8,
+    "free": 1833,
+    "blocked": false,
+    "clr": 84.027
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 88.8,
+    "free": 24,
+    "blocked": false,
+    "clr": 1.653
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 93.6,
+    "free": 4,
+    "blocked": false,
+    "clr": 1.111
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 89.4,
+    "free": 19,
+    "blocked": false,
+    "clr": 1.303
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 90.7,
+    "free": 0,
+    "blocked": false,
+    "clr": 0.277
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   1
+  ],
+  "pclr": [
+   -1.0,
+   1.653,
+   -1.0,
+   0.996,
+   -1.0,
+   1.302,
+   -1.0,
+   0.193
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 10,
+  "smallest": "1",
+  "thin": 4.15,
+  "ratio": 2.87913779830639,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r007",
+  "R": 0.075,
+  "detJ": 0.1942,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 16.7,
+    "free": 1601,
+    "blocked": false,
+    "clr": 76.514
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 13.0,
+    "free": 1688,
+    "blocked": false,
+    "clr": 79.65
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 12.9,
+    "free": 1692,
+    "blocked": false,
+    "clr": 77.938
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 11.3,
+    "free": 1752,
+    "blocked": false,
+    "clr": 81.29
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 88.4,
+    "free": 30,
+    "blocked": false,
+    "clr": 2.349
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 95.5,
+    "free": 4,
+    "blocked": false,
+    "clr": 1.329
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 89.0,
+    "free": 20,
+    "blocked": false,
+    "clr": 2.023
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 90.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   2.349,
+   -1.0,
+   1.182,
+   -1.0,
+   2.023,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 9,
+  "smallest": "1",
+  "thin": 2.725,
+  "ratio": 2.971180418476115,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r010",
+  "R": 0.1,
+  "detJ": 0.1676,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 21.7,
+    "free": 1477,
+    "blocked": false,
+    "clr": 72.359
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 16.9,
+    "free": 1585,
+    "blocked": false,
+    "clr": 76.35
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 16.8,
+    "free": 1600,
+    "blocked": false,
+    "clr": 74.325
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 14.5,
+    "free": 1677,
+    "blocked": false,
+    "clr": 78.709
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 88.0,
+    "free": 34,
+    "blocked": false,
+    "clr": 2.947
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 97.3,
+    "free": 3,
+    "blocked": false,
+    "clr": 1.322
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 88.7,
+    "free": 18,
+    "blocked": false,
+    "clr": 2.76
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 99.6,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   2.947,
+   -1.0,
+   1.165,
+   -1.0,
+   2.761,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 9,
+  "smallest": "1",
+  "thin": 1.8865,
+  "ratio": 3.0672336978533816,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r012",
+  "R": 0.125,
+  "detJ": 0.08465,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 26.5,
+    "free": 1358,
+    "blocked": false,
+    "clr": 68.389
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 20.5,
+    "free": 1484,
+    "blocked": false,
+    "clr": 73.126
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 20.4,
+    "free": 1508,
+    "blocked": false,
+    "clr": 70.932
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 17.6,
+    "free": 1607,
+    "blocked": false,
+    "clr": 76.275
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 87.7,
+    "free": 36,
+    "blocked": false,
+    "clr": 3.463
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 99.2,
+    "free": 2,
+    "blocked": false,
+    "clr": 1.099
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 95.2,
+    "free": 11,
+    "blocked": false,
+    "clr": 3.441
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 119.2,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   3.463,
+   -1.0,
+   0.976,
+   -1.0,
+   3.441,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 9,
+  "smallest": "1",
+  "thin": 0.48865000000000003,
+  "ratio": 3.1661819692563355,
+  "folded": 0
+ },
+ {
+  "shape": "sphere",
+  "file": "tvs_sphere_r015",
+  "R": 0.15,
+  "detJ": -0.09237,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 31.0,
+    "free": 1247,
+    "blocked": false,
+    "clr": 64.611
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 23.8,
+    "free": 1389,
+    "blocked": false,
+    "clr": 69.982
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 23.8,
+    "free": 1430,
+    "blocked": false,
+    "clr": 67.758
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 20.4,
+    "free": 1535,
+    "blocked": false,
+    "clr": 73.976
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 87.5,
+    "free": 35,
+    "blocked": false,
+    "clr": 3.906
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 101.0,
+    "free": 1,
+    "blocked": false,
+    "clr": 0.674
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 107.9,
+    "free": 2,
+    "blocked": false,
+    "clr": 1.498
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 134.4,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   1,
+   0,
+   1,
+   0,
+   1,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   3.906,
+   -1.0,
+   0.607,
+   -1.0,
+   1.498,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 9,
+  "smallest": "1",
+  "thin": 0.0004764,
+  "ratio": 3.269394714407502,
+  "folded": 3
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r000",
+  "R": 0,
+  "detJ": 0.03562,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 0.0,
+    "free": 2001,
+    "blocked": false,
+    "clr": 90.0
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 1.0,
+    "free": 1977,
+    "blocked": false,
+    "clr": 89.266
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 1.0,
+    "free": 1977,
+    "blocked": false,
+    "clr": 89.266
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 1.1,
+    "free": 1969,
+    "blocked": false,
+    "clr": 89.111
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 1.1,
+    "free": 1974,
+    "blocked": false,
+    "clr": 89.111
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 109.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 118.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 109.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 118.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.17278652906029332,
+  "ratio": 11.38211382113821,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r0025",
+  "R": 0.0025,
+  "detJ": 0.03619,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 4.7,
+    "free": 1901,
+    "blocked": false,
+    "clr": 85.685
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 7.0,
+    "free": 1867,
+    "blocked": false,
+    "clr": 84.294
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 4.2,
+    "free": 1907,
+    "blocked": false,
+    "clr": 86.414
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 4.3,
+    "free": 1894,
+    "blocked": false,
+    "clr": 86.062
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 3.5,
+    "free": 1935,
+    "blocked": false,
+    "clr": 87.535
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 2.2,
+    "free": 1941,
+    "blocked": false,
+    "clr": 88.131
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 2.9,
+    "free": 1932,
+    "blocked": false,
+    "clr": 87.709
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 2.1,
+    "free": 1933,
+    "blocked": false,
+    "clr": 87.963
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 109.8,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 117.5,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 109.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 117.5,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.17691472026072785,
+  "ratio": 11.409495548961424,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r005",
+  "R": 0.005,
+  "detJ": 0.03587,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 10.2,
+    "free": 1794,
+    "blocked": false,
+    "clr": 81.053
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 14.4,
+    "free": 1730,
+    "blocked": false,
+    "clr": 78.322
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 8.1,
+    "free": 1825,
+    "blocked": false,
+    "clr": 83.04
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 8.7,
+    "free": 1791,
+    "blocked": false,
+    "clr": 82.122
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 6.8,
+    "free": 1867,
+    "blocked": false,
+    "clr": 85.086
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 4.0,
+    "free": 1898,
+    "blocked": false,
+    "clr": 86.662
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 5.1,
+    "free": 1869,
+    "blocked": false,
+    "clr": 85.752
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 4.8,
+    "free": 1873,
+    "blocked": false,
+    "clr": 86.004
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 110.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 116.4,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 110.6,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 116.2,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.1802281368821293,
+  "ratio": 11.454138702460849,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r0075",
+  "R": 0.0075,
+  "detJ": 0.03523,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 16.8,
+    "free": 1679,
+    "blocked": false,
+    "clr": 76.008
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 22.1,
+    "free": 1582,
+    "blocked": false,
+    "clr": 72.01
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 11.8,
+    "free": 1740,
+    "blocked": false,
+    "clr": 79.761
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 13.6,
+    "free": 1680,
+    "blocked": false,
+    "clr": 78.021
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 10.3,
+    "free": 1803,
+    "blocked": false,
+    "clr": 82.621
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 5.9,
+    "free": 1851,
+    "blocked": false,
+    "clr": 85.141
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 7.2,
+    "free": 1812,
+    "blocked": false,
+    "clr": 83.748
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 7.9,
+    "free": 1821,
+    "blocked": false,
+    "clr": 83.838
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 110.8,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 115.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 112.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 114.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.1843563280825638,
+  "ratio": 11.49063670411985,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r010",
+  "R": 0.01,
+  "detJ": 0.02875,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 24.6,
+    "free": 1548,
+    "blocked": false,
+    "clr": 70.447
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 29.9,
+    "free": 1439,
+    "blocked": false,
+    "clr": 65.581
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 15.2,
+    "free": 1664,
+    "blocked": false,
+    "clr": 76.636
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 18.7,
+    "free": 1569,
+    "blocked": false,
+    "clr": 73.867
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 13.7,
+    "free": 1740,
+    "blocked": false,
+    "clr": 80.168
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 7.8,
+    "free": 1805,
+    "blocked": false,
+    "clr": 83.606
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 9.2,
+    "free": 1751,
+    "blocked": false,
+    "clr": 81.721
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 11.3,
+    "free": 1757,
+    "blocked": false,
+    "clr": 81.517
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 111.3,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 114.4,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 113.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 116.2,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.18848451928299836,
+  "ratio": 11.544837980406932,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r015",
+  "R": 0.015,
+  "detJ": 0.001577,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 44.3,
+    "free": 1252,
+    "blocked": false,
+    "clr": 57.575
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 44.7,
+    "free": 1141,
+    "blocked": false,
+    "clr": 53.075
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 29.6,
+    "free": 1426,
+    "blocked": false,
+    "clr": 66.69
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 29.3,
+    "free": 1337,
+    "blocked": false,
+    "clr": 65.63
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 20.7,
+    "free": 1608,
+    "blocked": false,
+    "clr": 75.344
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 11.7,
+    "free": 1708,
+    "blocked": false,
+    "clr": 80.213
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 13.0,
+    "free": 1624,
+    "blocked": false,
+    "clr": 77.549
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 19.4,
+    "free": 1619,
+    "blocked": false,
+    "clr": 76.317
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 112.4,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 141.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 117.0,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 123.9,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 6,
+  "smallest": "0,1",
+  "thin": 0.19587180879956545,
+  "ratio": 11.655225019069412,
+  "folded": 0
+ },
+ {
+  "shape": "duck",
+  "file": "tvs_duck_r020",
+  "R": 0.02,
+  "detJ": -0.03107,
+  "pairs": [
+   {
+    "a": 0,
+    "b": 4,
+    "axis": "u",
+    "spread": 67.6,
+    "free": 919,
+    "blocked": false,
+    "clr": 43.411
+   },
+   {
+    "a": 1,
+    "b": 5,
+    "axis": "u",
+    "spread": 57.5,
+    "free": 882,
+    "blocked": false,
+    "clr": 41.98
+   },
+   {
+    "a": 2,
+    "b": 6,
+    "axis": "u",
+    "spread": 85.2,
+    "free": 740,
+    "blocked": false,
+    "clr": 36.197
+   },
+   {
+    "a": 3,
+    "b": 7,
+    "axis": "u",
+    "spread": 39.6,
+    "free": 1104,
+    "blocked": false,
+    "clr": 57.9
+   },
+   {
+    "a": 0,
+    "b": 2,
+    "axis": "v",
+    "spread": 27.4,
+    "free": 1477,
+    "blocked": false,
+    "clr": 70.672
+   },
+   {
+    "a": 4,
+    "b": 6,
+    "axis": "v",
+    "spread": 15.9,
+    "free": 1602,
+    "blocked": false,
+    "clr": 76.613
+   },
+   {
+    "a": 1,
+    "b": 3,
+    "axis": "v",
+    "spread": 19.1,
+    "free": 1494,
+    "blocked": false,
+    "clr": 73.094
+   },
+   {
+    "a": 5,
+    "b": 7,
+    "axis": "v",
+    "spread": 29.2,
+    "free": 1454,
+    "blocked": false,
+    "clr": 70.287
+   },
+   {
+    "a": 0,
+    "b": 1,
+    "axis": "w",
+    "spread": 113.8,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 2,
+    "b": 3,
+    "axis": "w",
+    "spread": 170.8,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 4,
+    "b": 5,
+    "axis": "w",
+    "spread": 121.6,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   },
+   {
+    "a": 6,
+    "b": 7,
+    "axis": "w",
+    "spread": 130.8,
+    "free": 0,
+    "blocked": true,
+    "clr": 0.0
+   }
+  ],
+  "free": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "pclr": [
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0,
+   -1.0
+  ],
+  "key": false,
+  "k": 0,
+  "ways": 4,
+  "smallest": "2,3",
+  "thin": 0.00033161325366648563,
+  "ratio": 11.778808971384377,
+  "folded": 4
+ }
+]

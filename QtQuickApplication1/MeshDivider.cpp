@@ -5,6 +5,8 @@
 
 #include "MeshDivider.h"
 
+#include <QDebug>
+
 #include <QHash>
 #include <QSet>
 #include <QRandomGenerator>
@@ -68,6 +70,112 @@ void clipToBox(const V3 tri[3], const double lo[3], const double hi[3],
             return;
         clipHalfSpace(poly, scratch, a, hi[a], false);
         poly.swap(scratch);
+    }
+}
+
+// A half-space { x : dot(nrm, x) <= off }.
+//
+// The axis-aligned clipper above stays as it is: it snaps the clipped
+// coordinate exactly onto the plane, and capCell relies on that exactness
+// (it finds on-plane vertices by float equality). A dovetail's flanks are not
+// axis-aligned, so those need this general form - and anything capped against
+// a general plane has to use a tolerance instead of equality.
+struct HPlane {
+    double nrm[3];
+    double off;
+};
+
+inline double planeDist(const HPlane &p, const V3 &v)
+{
+    return p.nrm[0] * v.x + p.nrm[1] * v.y + p.nrm[2] * v.z - p.off;
+}
+
+// Lexicographic order on a point, so a shared edge is always interpolated from
+// the same end.
+//
+// Two triangles that share an edge walk it in opposite directions, so one
+// computes lerp(a,b,t) and the other lerp(b,a,1-t). Those are equal in exact
+// arithmetic and NOT bit-equal in floating point, which would leave the two
+// fragments with slightly different vertices - a crack the welder cannot close.
+// Canonicalising the direction first makes both sides produce identical bits.
+inline bool lexLess(const V3 &a, const V3 &b)
+{
+    if (a.x != b.x) return a.x < b.x;
+    if (a.y != b.y) return a.y < b.y;
+    return a.z < b.z;
+}
+
+inline V3 planeCross(const HPlane &p, const V3 &a, const V3 &b)
+{
+    const bool flip = !lexLess(a, b);
+    const V3 &u = flip ? b : a;
+    const V3 &w = flip ? a : b;
+    const double du = planeDist(p, u), dw = planeDist(p, w);
+    const double den = du - dw;
+    const double t = (den != 0.0) ? du / den : 0.0;
+    V3 q = lerp(u, w, t);
+
+    // Project exactly onto the plane.
+    //
+    // The axis-aligned clipper snaps its clipped coordinate, which is what lets
+    // capCell decide "is this vertex on the face" by float equality. Without an
+    // equivalent here the interpolated point sits within float noise of the
+    // plane, and near-tangent geometry gets misclassified - measured on bimba,
+    // that left a rim chain ending in mid-face with nowhere for the perimeter
+    // walk to go, and the whole face was left uncapped. Normals are unit, so
+    // subtracting the signed distance lands the point on the plane.
+    const double d = planeDist(p, q);
+    return V3 { q.x - p.nrm[0] * d, q.y - p.nrm[1] * d, q.z - p.nrm[2] * d };
+}
+
+// Sutherland-Hodgman against one general half-space, keeping dist <= 0.
+void clipHalfSpacePlane(const QVector<V3> &in, QVector<V3> &out, const HPlane &p)
+{
+    out.clear();
+    const int n = in.size();
+    if (n == 0)
+        return;
+
+    for (int i = 0; i < n; ++i) {
+        const V3 &a = in[i];
+        const V3 &b = in[(i + 1) % n];
+        const double da = planeDist(p, a), db = planeDist(p, b);
+
+        if (da <= 0.0)
+            out.append(a);
+        if ((da <= 0.0) != (db <= 0.0))
+            out.append(planeCross(p, a, b));
+    }
+}
+
+// Clips a triangle to an intersection of half-spaces. The result stays convex,
+// so the caller can still fan-triangulate it.
+void clipToConvex(const V3 tri[3], const QVector<HPlane> &planes,
+                  QVector<V3> &poly, QVector<V3> &scratch)
+{
+    poly.clear();
+    poly.append(tri[0]); poly.append(tri[1]); poly.append(tri[2]);
+
+    for (const HPlane &p : planes) {
+        if (poly.size() < 3) { poly.clear(); return; }
+        clipHalfSpacePlane(poly, scratch, p);
+        poly.swap(scratch);
+    }
+    if (poly.size() < 3)
+        poly.clear();
+}
+
+// The six planes of an axis-aligned box, outward normals.
+void boxPlanes(const double lo[3], const double hi[3], QVector<HPlane> *out)
+{
+    out->clear();
+    for (int a = 0; a < 3; ++a) {
+        HPlane hp {};
+        hp.nrm[a] = -1.0; hp.off = -lo[a];
+        out->append(hp);
+        HPlane hq {};
+        hq.nrm[a] = 1.0;  hq.off = hi[a];
+        out->append(hq);
     }
 }
 
@@ -147,6 +255,328 @@ void earClip(const QVector<uint32_t> &loop, const QVector<float> &pos,
 }
 
 bool pointInside(const MeshData &m, const double p[3]);
+
+// A planar face of a convex region: the plane, the polygon it cuts out of that
+// plane, and the axis to drop when projecting the face to 2D.
+struct RegionFace {
+    HPlane      plane;
+    QVector<V3> poly;
+    int         drop = 2;
+};
+
+// The faces of a convex region given by its planes. Each face is a large square
+// lying in one plane, clipped by all the others - which reuses the same
+// half-space clipper the triangles go through.
+void regionFaces(const QVector<HPlane> &planes, const double centre[3],
+                 double reach, QVector<RegionFace> *out)
+{
+    out->clear();
+    QVector<V3> poly, scratch;
+
+    for (int i = 0; i < planes.size(); ++i) {
+        const HPlane &p = planes[i];
+
+        int small = 0;
+        for (int a = 1; a < 3; ++a)
+            if (std::fabs(p.nrm[a]) < std::fabs(p.nrm[small]))
+                small = a;
+
+        V3 unit { small == 0 ? 1.0 : 0.0, small == 1 ? 1.0 : 0.0, small == 2 ? 1.0 : 0.0 };
+        V3 n { p.nrm[0], p.nrm[1], p.nrm[2] };
+        V3 e1 { n.y * unit.z - n.z * unit.y,
+                n.z * unit.x - n.x * unit.z,
+                n.x * unit.y - n.y * unit.x };
+        double l1 = std::sqrt(e1.x * e1.x + e1.y * e1.y + e1.z * e1.z);
+        if (!(l1 > 1e-12))
+            continue;
+        e1 = { e1.x / l1, e1.y / l1, e1.z / l1 };
+        V3 e2 { n.y * e1.z - n.z * e1.y,
+                n.z * e1.x - n.x * e1.z,
+                n.x * e1.y - n.y * e1.x };
+
+        // Drop the axis the face is most perpendicular to, so the 2D projection
+        // never collapses.
+        int drop = 0;
+        for (int a = 1; a < 3; ++a)
+            if (std::fabs(p.nrm[a]) > std::fabs(p.nrm[drop]))
+                drop = a;
+
+        const double d = planeDist(p, V3 { centre[0], centre[1], centre[2] });
+        const V3 base { centre[0] - p.nrm[0] * d,
+                        centre[1] - p.nrm[1] * d,
+                        centre[2] - p.nrm[2] * d };
+
+        poly.clear();
+        for (int c = 0; c < 4; ++c) {
+            const double su = (c == 0 || c == 3) ? -reach : reach;
+            const double sv = (c < 2)            ? -reach : reach;
+            poly.append(V3 { base.x + e1.x * su + e2.x * sv,
+                             base.y + e1.y * su + e2.y * sv,
+                             base.z + e1.z * su + e2.z * sv });
+        }
+
+        for (int j = 0; j < planes.size() && poly.size() >= 3; ++j) {
+            if (j == i)
+                continue;
+            clipHalfSpacePlane(poly, scratch, planes[j]);
+            poly.swap(scratch);
+        }
+        if (poly.size() < 3)
+            continue;
+
+        RegionFace f;
+        f.plane = p;
+        f.poly  = poly;
+        f.drop  = drop;
+        out->append(f);
+    }
+}
+
+// Closes the cut faces of a piece clipped to a convex region.
+//
+// This is capCell generalised twice over: the face is any planar polygon rather
+// than an axis-aligned rectangle, and "is this vertex on the face" is a
+// tolerance test rather than float equality, because a general plane does not
+// snap its intersections onto a round coordinate the way the axis-aligned
+// clipper does.
+bool capRegion(MeshData &out, const QVector<RegionFace> &faces,
+               bool inwardWinding, double tol)
+{
+    const auto dirKey = [](uint32_t x, uint32_t y) {
+        return (quint64(x) << 32) | y;
+    };
+
+    QHash<quint64, uint32_t> directed;
+    for (int t = 0; t + 2 < out.tris.size(); t += 3) {
+        const uint32_t a = out.tris[t + 0], b = out.tris[t + 1], c = out.tris[t + 2];
+        directed.insert(dirKey(a, b), c);
+        directed.insert(dirKey(b, c), a);
+        directed.insert(dirKey(c, a), b);
+    }
+
+    struct RimEdge { uint32_t from, to, apex; };
+    QVector<RimEdge> rim;
+    for (auto it = directed.constBegin(); it != directed.constEnd(); ++it) {
+        const uint32_t x = uint32_t(it.key() >> 32);
+        const uint32_t y = uint32_t(it.key() & 0xffffffffu);
+        if (!directed.contains(dirKey(y, x)))
+            rim.append({ y, x, it.value() });
+    }
+    if (rim.isEmpty())
+        return true;
+
+    QHash<VKey, quint32> vindex;
+    for (int i = 0; i < out.vertexCount(); ++i)
+        vindex.insert(VKey { out.pos[i * 3 + 0], out.pos[i * 3 + 1], out.pos[i * 3 + 2] },
+                      quint32(i));
+    const auto vertexOf = [&](const V3 &p) {
+        const VKey k { float(p.x) + 0.0f, float(p.y) + 0.0f, float(p.z) + 0.0f };
+        const auto it = vindex.constFind(k);
+        if (it != vindex.constEnd())
+            return uint32_t(*it);
+        const uint32_t id = out.addVertex(k.x, k.y, k.z);
+        vindex.insert(k, id);
+        return id;
+    };
+
+    for (const RegionFace &face : faces) {
+        // Swap u and v on the far-side face, exactly as capCell does. That face
+        // is seen from the other side, so without the swap its projected
+        // winding is mirrored and one area-sign test cannot serve both.
+        const bool high = face.plane.nrm[face.drop] > 0.0;
+        const int u = high ? (face.drop + 1) % 3 : (face.drop + 2) % 3;
+        const int v = high ? (face.drop + 2) % 3 : (face.drop + 1) % 3;
+
+        const auto at = [&](uint32_t i) {
+            return V3 { double(out.pos[i * 3 + 0]),
+                        double(out.pos[i * 3 + 1]),
+                        double(out.pos[i * 3 + 2]) };
+        };
+        const auto onPlane = [&](uint32_t i) {
+            return std::fabs(planeDist(face.plane, at(i))) <= tol;
+        };
+
+        QHash<uint32_t, uint32_t> forward;
+        for (const RimEdge &e : rim)
+            if (onPlane(e.from) && onPlane(e.to) && !onPlane(e.apex))
+                forward.insert(e.from, e.to);
+        if (forward.isEmpty())
+            continue;
+
+        // Arc length around the face polygon, projected to (u,v).
+        const int m = face.poly.size();
+        QVector<double> cum(m + 1, 0.0);
+        for (int i = 0; i < m; ++i) {
+            const V3 &a = face.poly[i];
+            const V3 &b = face.poly[(i + 1) % m];
+            const double du = b[u] - a[u], dv = b[v] - a[v];
+            cum[i + 1] = cum[i] + std::sqrt(du * du + dv * dv);
+        }
+        const double perim = cum[m];
+        if (!(perim > 0.0))
+            continue;
+
+        const auto paramOf = [&](const V3 &p, double *tOut) {
+            double best = -1.0, bestT = 0.0;
+            for (int i = 0; i < m; ++i) {
+                const V3 &a = face.poly[i];
+                const V3 &b = face.poly[(i + 1) % m];
+                const double du = b[u] - a[u], dv = b[v] - a[v];
+                const double len2 = du * du + dv * dv;
+                if (!(len2 > 0.0))
+                    continue;
+                double s = ((p[u] - a[u]) * du + (p[v] - a[v]) * dv) / len2;
+                s = qBound(0.0, s, 1.0);
+                const double cu = a[u] + du * s, cv = a[v] + dv * s;
+                const double d2 = (p[u] - cu) * (p[u] - cu) + (p[v] - cv) * (p[v] - cv);
+                if (best < 0.0 || d2 < best) {
+                    best  = d2;
+                    bestT = cum[i] + std::sqrt(len2) * s;
+                }
+            }
+            *tOut = bestT;
+            return best >= 0.0 && best <= tol * tol;
+        };
+
+        struct Stop { double t; uint32_t vert; };
+        QVector<Stop> stops;
+        for (int i = 0; i < m; ++i)
+            stops.append({ cum[i], vertexOf(face.poly[i]) });
+        for (auto it = forward.constBegin(); it != forward.constEnd(); ++it) {
+            double t = 0.0;
+            if (paramOf(at(it.key()), &t))
+                stops.append({ t, it.key() });
+        }
+
+        const auto onBorder = [&](uint32_t i) {
+            double t = 0.0;
+            return paramOf(at(i), &t);
+        };
+
+        struct Attempt { bool ok; double area; QVector<QVector<uint32_t>> loops; };
+
+        const auto build = [&](bool borderCW) {
+            Attempt res { true, 0.0, {} };
+            QHash<uint32_t, bool> started;
+
+            for (auto it = forward.constBegin(); it != forward.constEnd() && res.ok; ++it) {
+                if (started.value(it.key(), false))
+                    continue;
+
+                QVector<uint32_t> loop;
+                uint32_t cur = it.key();
+                const uint32_t first = cur;
+                int guard = 4 * (forward.size() + stops.size()) + 16;
+
+                // One unclosable chain used to discard every loop on the face,
+                // leaving it open. Measured on bimba: a cross-section there has
+                // a chain that starts in mid-face - the surface is tangent to
+                // the plane, so the outline terminates in mid-air and there is
+                // no border to walk to. Drop that chain and keep the rest,
+                // which caps the face from the genuine outline instead of
+                // abandoning it.
+                bool bad = false;
+
+                while (guard-- > 0) {
+                    loop.append(cur);
+                    started[cur] = true;
+
+                    const auto nx = forward.constFind(cur);
+                    if (nx != forward.constEnd()) {
+                        cur = *nx;
+                    }
+                    else {
+                        double t = 0.0;
+                        if (!paramOf(at(cur), &t)) { bad = true; break; }
+                        uint32_t nextVert = uint32_t(-1);
+                        double   bestGap  = perim * 2.0;
+                        for (const Stop &st : stops) {
+                            if (st.vert == cur)
+                                continue;
+                            double gap = borderCW ? (t - st.t) : (st.t - t);
+                            if (gap <= 1e-12)
+                                gap += perim;
+                            if (gap < bestGap) { bestGap = gap; nextVert = st.vert; }
+                        }
+                        if (nextVert == uint32_t(-1)) { bad = true; break; }
+                        cur = nextVert;
+                    }
+
+                    if (cur == first)
+                        break;
+                }
+                if (guard <= 0)
+                    bad = true;
+
+                if (!bad && loop.size() >= 3) {
+                    double a2 = 0.0;
+                    for (int i = 0, j = loop.size() - 1; i < loop.size(); j = i++)
+                        a2 += double(out.pos[loop[j] * 3 + u]) * double(out.pos[loop[i] * 3 + v])
+                            - double(out.pos[loop[i] * 3 + u]) * double(out.pos[loop[j] * 3 + v]);
+                    res.area += 0.5 * a2;
+                    res.loops.append(loop);
+                }
+            }
+            return res;
+        };
+
+        const auto areaOk = [&](const Attempt &x) {
+            return x.ok && !x.loops.isEmpty() &&
+                   (inwardWinding ? x.area < 0.0 : x.area > 0.0);
+        };
+
+        Attempt a = build(inwardWinding);
+        if (!areaOk(a)) {
+            Attempt b = build(!inwardWinding);
+            if (areaOk(b))
+                a = b;
+        }
+
+        if (!areaOk(a)) {
+            // TEMPORARY - diagnostic.
+            int ends = 0, endsOff = 0;
+            QSet<uint32_t> targets;
+            for (auto it = forward.constBegin(); it != forward.constEnd(); ++it)
+                targets.insert(it.value());
+            for (auto it = forward.constBegin(); it != forward.constEnd(); ++it) {
+                if (targets.contains(it.key()))
+                    continue;                      // mid-chain, not an end
+                ++ends;
+                double t = 0.0;
+                if (!paramOf(at(it.key()), &t))
+                    ++endsOff;
+            }
+            qWarning().noquote()
+                << QStringLiteral("CAPFAIL n=(%1,%2,%3) chains=%4 stops=%5 "
+                                  "loops=%6 area=%7 ok=%8 chainStarts=%9 offBorder=%10 tol=%11")
+                       .arg(face.plane.nrm[0], 0, 'f', 2)
+                       .arg(face.plane.nrm[1], 0, 'f', 2)
+                       .arg(face.plane.nrm[2], 0, 'f', 2)
+                       .arg(forward.size()).arg(stops.size())
+                       .arg(a.loops.size()).arg(a.area, 0, 'g', 4)
+                       .arg(a.ok).arg(ends).arg(endsOff)
+                       .arg(tol, 0, 'g', 4);
+        }
+
+        if (areaOk(a))
+            for (const QVector<uint32_t> &loop : a.loops)
+                earClip(loop, out.pos, face.drop, high == inwardWinding, &out.tris);
+    }
+
+    QHash<quint64, int> after;
+    for (int t = 0; t + 2 < out.tris.size(); t += 3) {
+        ++after[dirKey(out.tris[t + 0], out.tris[t + 1])];
+        ++after[dirKey(out.tris[t + 1], out.tris[t + 2])];
+        ++after[dirKey(out.tris[t + 2], out.tris[t + 0])];
+    }
+    for (auto it = after.constBegin(); it != after.constEnd(); ++it) {
+        const uint32_t x = uint32_t(it.key() >> 32);
+        const uint32_t y = uint32_t(it.key() & 0xffffffffu);
+        if (!after.contains(dirKey(y, x)))
+            return false;
+    }
+    return true;
+}
 
 // Closes the cut faces of one clipped cell. Returns true if the piece is a
 // closed solid afterwards.
@@ -889,9 +1319,32 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
     int openPieces = 0, empty = 0;
     QVector<V3> poly, scratch;
 
+    // TEMPORARY - Step A/B validation. Given the same box, the general convex
+    // clipper and the general capper must reproduce the axis-aligned result
+    // exactly; only then is the machinery trustworthy enough to carry a tooth.
+    const bool useGeneral = qEnvironmentVariableIsSet("PUZZLE_GENERAL_CLIP");
+    double diag = 0.0;
+    for (int a = 0; a < 3; ++a) {
+        const double d = double(mesh.bmax[a]) - double(mesh.bmin[a]);
+        diag += d * d;
+    }
+    diag = std::sqrt(diag);
+    const double capTol = qMax(1e-9, diag * 1e-6);
+
+    QVector<HPlane>     cellPlanes;
+    QVector<RegionFace> cellFaces;
+
     for (int ci = 0; ci < cells.size(); ++ci) {
         const double *lo = cells[ci].lo;
         const double *hi = cells[ci].hi;
+
+        if (useGeneral) {
+            boxPlanes(lo, hi, &cellPlanes);
+            const double mid[3] = { 0.5 * (lo[0] + hi[0]),
+                                    0.5 * (lo[1] + hi[1]),
+                                    0.5 * (lo[2] + hi[2]) };
+            regionFaces(cellPlanes, mid, diag, &cellFaces);
+        }
 
         PuzzlePiece piece;
         piece.i = ci;
@@ -925,7 +1378,10 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
                 const float *p = &mesh.pos[mesh.tris[t * 3 + c] * 3];
                 tri[c] = { double(p[0]), double(p[1]), double(p[2]) };
             }
-            clipToBox(tri, lo, hi, poly, scratch);
+            if (useGeneral)
+                clipToConvex(tri, cellPlanes, poly, scratch);
+            else
+                clipToBox(tri, lo, hi, poly, scratch);
             if (poly.size() < 3)
                 continue;
 
@@ -952,7 +1408,10 @@ bool MeshDivider::divideCells(const MeshData &mesh, const QVector<CellBox> &cell
             emitBox(out, lo, hi, inwardWinding);
         }
         else {
-            if (!capCell(out, lo, hi, inwardWinding, mesh))
+            const bool closed = useGeneral
+                                    ? capRegion(out, cellFaces, inwardWinding, capTol)
+                                    : capCell(out, lo, hi, inwardWinding, mesh);
+            if (!closed)
                 ++openPieces;
             subdivideCutFaces(out, lo, hi, cutDetail);
         }

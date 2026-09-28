@@ -122,6 +122,7 @@
     <ClCompile Include="CadLoader.cpp" />
     <ClCompile Include="AssemblyOrder.cpp" />
     <ClCompile Include="CageBoolean.cpp" />
+    <ClCompile Include="DbgAnalysis.cpp" />
     <ClCompile Include="MaterialField.cpp" />
     <ClCompile Include="PieceExport.cpp" />
     <ClCompile Include="IritSolid.cpp" />
@@ -141,6 +142,7 @@
     <ClCompile Include="DivisionReport.cpp" />
     <ClCompile Include="PlannerOrder.cpp" />
     <ClCompile Include="PuzzleDivider.cpp" />
+    <ClCompile Include="PuzzleAnalyzer.cpp" />
     <ClCompile Include="Trivariate.cpp" />
     <None Include="scripts\spiral_joint_gen.irt" />
     <None Include="scripts\spiral_test.irt" />
@@ -150,6 +152,7 @@
     <ClInclude Include="CadLoader.h" />
     <ClInclude Include="AssemblyOrder.h" />
     <ClInclude Include="CageBoolean.h" />
+    <ClInclude Include="DbgAnalysis.h" />
     <ClInclude Include="MaterialField.h" />
     <ClInclude Include="PieceExport.h" />
     <ClInclude Include="IritSolid.h" />
@@ -172,9 +175,11 @@
   <ItemGroup>
     <QtMoc Include="AppController.h" />
     <QtMoc Include="MeshView.h" />
+    <QtMoc Include="PuzzleAnalyzer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="main.qml" />
+    <None Include="AnalyzerWindow.qml" />
     <None Include="docs\ARCHITECTURE.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
