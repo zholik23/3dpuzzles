@@ -5,6 +5,11 @@
 
 #include "AppController.h"
 
+#include "CurvedBsp.h"
+#include "CutInD.h"
+#include "HarmonicFit.h"
+#include "IritGuard.h"
+
 #include "MaterialField.h"
 #include "CadLoader.h"
 #include "PlannerGraph.h"
@@ -20,6 +25,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QLocale>
+#include <QtConcurrent/QtConcurrentRun>
 
 // LAST, and it must stay last: IritSolid.h pulls in irit_sm.h, which #defines
 // _mkdir, and above <QDir> that makes QDir::_mkdir a redeclaration (C2535).
@@ -29,6 +35,8 @@
 AppController::AppController(QObject *parent)
     : QObject(parent)
 {
+    connect(&m_fitWatcher, &QFutureWatcher<QVector<HarmonicFit::Result>>::finished,
+            this, &AppController::finishFit);
 }
 
 QStringList AppController::nameFilters() const
@@ -55,6 +63,15 @@ void AppController::loadPath(const QString &path)
 
     m_fileName   = QFileInfo(path).fileName();
     m_loadedPath = path;
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
+    m_parts.clear();
+    m_blocks.clear();
+    m_blockNames.clear();
+    m_blockVol.clear();
+    m_blockPart.clear();
+    m_blockFits.clear();
 
     QElapsedTimer timer;
     timer.start();
@@ -105,11 +122,27 @@ void AppController::loadPath(const QString &path)
     m_status   = m_fileName;
     m_detail   = d;
     m_hasError = false;
+    m_trivReal = false;
 
     emit meshChanged();
     emit piecesChanged();
     emit trivariateChanged();
     emit statusChanged();
+
+    // An IRIT file holding a trivariate (Elber's tvs_*.itd) is used AS the
+    // trivariate, so Divide cuts its parameter domain D. Meshes (OBJ, STL)
+    // have no trivariate and keep the old path.
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == QLatin1String("itd") || ext == QLatin1String("ibd") || ext == QLatin1String("imd")) {
+        QString terr;
+        Trivariate tv = Trivariate::fromFile(path, &terr);
+        if (tv.isValid()) {
+            adoptTrivariate(std::move(tv), QStringLiteral("trivariate from %1").arg(m_fileName));
+            m_trivReal = true;
+            m_detail = m_trivInfo + QStringLiteral("\nRandom divides this trivariate's domain D (BSP in D).");
+            emit statusChanged();
+        }
+    }
 }
 
 void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
@@ -119,6 +152,14 @@ void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
 
     m_triv = std::move(tv);
     m_pieces.clear();
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
+    m_blocks.clear();
+    m_blockNames.clear();
+    m_blockVol.clear();
+    m_blockPart.clear();
+    m_blockFits.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
     m_reportUrl.clear();
@@ -139,7 +180,7 @@ void AppController::adoptTrivariate(Trivariate tv, const QString &sourceDesc)
 
     MeshData whole;
     QString  err;
-    if (m_triv.tessellate(&whole, kModelFineNess, &err) && !whole.isEmpty()) {
+    if (m_triv.tessellate(&whole, fineNessFor(kModelFineNess), &err) && !whole.isEmpty()) {
         m_mesh = whole;
         emit meshChanged();
     }
@@ -166,6 +207,7 @@ void AppController::useTrivariateFromFile()
         return;
     }
     adoptTrivariate(std::move(tv), QStringLiteral("from %1").arg(m_fileName));
+    m_trivReal = true;
 }
 
 void AppController::usePrimitive(const QString &kind)
@@ -177,6 +219,7 @@ void AppController::usePrimitive(const QString &kind)
         return;
     }
     adoptTrivariate(std::move(tv), QStringLiteral("primitive"));
+    m_trivReal = false;
 }
 
 void AppController::useBoundingCage()
@@ -194,11 +237,345 @@ void AppController::useBoundingCage()
     adoptTrivariate(std::move(tv),
                     QStringLiteral("box over %1's extent - shape comes with "
                                    "the Increment 3 fit").arg(m_fileName));
+    m_trivReal = false;
+}
+
+double AppController::fineNessFor(double base, double perControlPoint) const
+{
+    int len[3];
+    m_triv.lengths(len);
+    return std::max(base, perControlPoint * std::max({ len[0], len[1], len[2] }));
+}
+
+void AppController::fitTrivariate(int detail)
+{
+    if (m_fitting)
+        return;
+    if (m_sourceMesh.isEmpty() || m_sourceMesh.triangleCount() == 0) {
+        setError(QStringLiteral("Load a closed triangle mesh (OBJ, STL) first."));
+        return;
+    }
+    m_fitting = true;
+    m_fitPath = m_loadedPath;
+    emit fittingChanged();
+
+    m_status   = QStringLiteral("Fitting a trivariate to %1 …").arg(m_fileName);
+    m_detail   = QStringLiteral("Harmonic volumetric parameterization (Martin, Cohen & Kirby 2009): "
+                                "surface harmonic, voxel harmonics, skeleton, w-paths, B-spline fit.");
+    m_hasError = false;
+    emit statusChanged();
+
+    HarmonicFit::Options opt;
+    if (detail > 0) {
+        opt.nu = 48;
+        opt.nv = 64;
+        opt.nw = 6;
+        opt.voxels = 128;
+        opt.capPerimeter = 0.02;
+    }
+    // Split first - always. A branching model is never fitted as one tube
+    // (legs, horns and ears squashed into fins); only a model where the split
+    // finds no limbs is one block.
+    if (m_parts.isEmpty()) {
+        splitLimbs();
+        if (m_parts.isEmpty()) {
+            m_fitting = false;
+            emit fittingChanged();
+            return;                                      // splitLimbs reported why
+        }
+    }
+    // One trivariate per part, each starting (u = 0) on its largest cap, and
+    // each made to enclose its part: pieces are trimmed by the part (Elber
+    // section 5), so their outside is exactly the model.
+    QVector<MeshData> meshes;
+    QVector<HarmonicFit::Options> opts;
+    // Enclosing fits + boolean trim (Elber section 5) are OFF: measured on
+    // spot, the blocks never fully enclosed their parts (body: 101 vertices
+    // out, 30 after local pushes, which then folded it) and 3-5 pieces failed
+    // the boolean - the pieces held 85% of the volume, then less. Kept in the
+    // code (Options::inflate, pushToEnclose) for the next attempt.
+    opt.inflate = m_encloseTrim ? 0.03 : 0.0;
+    m_fitParts = !m_parts.isEmpty();
+    if (m_fitParts) {
+        for (const HarmonicFit::Part &P : m_parts) {
+            HarmonicFit::Options o = opt;
+            const HarmonicFit::Cap *big = nullptr;
+            for (const auto &c : P.caps) if (!big || c.area > big->area) big = &c;
+            if (big) {
+                o.capStart = true;
+                for (int k = 0; k < 3; ++k) o.capCentre[k] = big->centre[k];
+            }
+            meshes.append(P.mesh);
+            opts.append(o);
+        }
+        m_detail = QStringLiteral("Fitting %1 trivariates, one per part of the limb split …").arg(m_parts.size());
+        emit statusChanged();
+    } else {
+        meshes.append(m_sourceMesh);
+        opts.append(opt);
+    }
+    m_fitWatcher.setFuture(QtConcurrent::run([meshes, opts]() {
+        QVector<HarmonicFit::Result> out;
+        for (int i = 0; i < meshes.size(); ++i) {
+            // Grow the margin until the block holds every vertex of its part
+            // (at most three tries); keep the try with the fewest outside.
+            HarmonicFit::Options o = opts[i];
+            HarmonicFit::Result best;
+            int bestOut = INT32_MAX;
+            for (int t = 0; t < 3; ++t) {
+                HarmonicFit::Result r = HarmonicFit::fit(meshes[i], o);
+                if (!r.ok) { if (!best.ok) best = r; break; }
+                double worst = 0.0;
+                const int outN = o.inflate > 0 ? HarmonicFit::outsideCount(r, meshes[i], &worst) : 0;
+                r.notes << QStringLiteral("enclosure try %1: margin %2%, %3 vertex(es) outside (worst %4%)")
+                               .arg(t + 1).arg(100.0 * o.inflate, 0, 'f', 1).arg(outN).arg(100.0 * worst, 0, 'f', 2);
+                if (outN < bestOut) { bestOut = outN; best = r; }
+                if (outN == 0 || o.inflate <= 0) break;
+                o.inflate *= 1.7;
+            }
+            // The last few vertices still outside: local pushes.
+            if (best.ok && bestOut > 0 && o.inflate > 0) {
+                const int left = HarmonicFit::pushToEnclose(&best, meshes[i]);
+                best.notes << QStringLiteral("local pushes: %1 vertex(es) still outside").arg(left);
+            }
+            out.append(best);
+        }
+        return out;
+    }));
+}
+
+void AppController::splitLimbs()
+{
+    if (m_sourceMesh.isEmpty() || m_sourceMesh.triangleCount() == 0) {
+        setError(QStringLiteral("Load a closed triangle mesh (OBJ, STL) first."));
+        return;
+    }
+    QElapsedTimer timer;
+    timer.start();
+    QVector<HarmonicFit::Part> parts;
+    QStringList notes;
+    QString err;
+    if (!HarmonicFit::splitLimbs(m_sourceMesh, HarmonicFit::SplitOptions(), &parts, &notes, &err)) {
+        setError(QStringLiteral("Limb split failed: %1").arg(err));
+        return;
+    }
+    for (const QString &n : notes)
+        qInfo().noquote() << QStringLiteral("SPLIT  ") + n;
+    m_parts = parts;
+    m_blocks.clear();
+    m_blockNames.clear();
+    m_blockVol.clear();
+    m_blockPart.clear();
+    m_blockFits.clear();
+
+    m_pieces.clear();
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
+    m_reportUrl.clear();
+    m_jointNote.clear();
+    for (int i = 0; i < parts.size(); ++i) {
+        PuzzlePiece pc;
+        pc.i = i;
+        pc.mesh = parts[i].mesh;
+        for (int a = 0; a < 3; ++a) {
+            pc.centre[a] = 0.5f * (pc.mesh.bmin[a] + pc.mesh.bmax[a]);
+            pc.size[a]   = pc.mesh.bmax[a] - pc.mesh.bmin[a];
+        }
+        m_pieces.append(std::move(pc));
+    }
+
+    QStringList lines;
+    for (const HarmonicFit::Part &P : parts)
+        lines << QStringLiteral("%1 %2%").arg(P.name).arg(100.0 * P.areaFrac, 0, 'f', 1);
+    m_divisionInfo = QStringLiteral("Morse split of %1: %2 part(s) (%3) · %4 ms\n"
+                                    "Each cut is capped with the same surface on both sides, so the parts "
+                                    "meet exactly. Fit trivariate now fits one trivariate per part.")
+                         .arg(m_fileName).arg(parts.size()).arg(lines.join(QStringLiteral(", ")))
+                         .arg(timer.elapsed());
+    m_status   = QStringLiteral("%1 — %2 parts (Morse split)").arg(m_fileName).arg(parts.size());
+    m_detail   = m_divisionInfo;
+    m_hasError = false;
+    emit piecesChanged();
+    emit statusChanged();
+}
+
+void AppController::finishFit()
+{
+    m_fitting = false;
+    emit fittingChanged();
+    const QVector<HarmonicFit::Result> all = m_fitWatcher.result();
+    if (m_fitPath != m_loadedPath || all.isEmpty())
+        return;                                   // another model was loaded meanwhile
+    if (m_fitParts) {
+        finishPartsFit(all);
+        return;
+    }
+    const HarmonicFit::Result r = all.front();
+    for (const QString &n : r.notes)
+        qInfo().noquote() << QStringLiteral("FIT  ") + n;
+    if (!r.ok) {
+        setError(QStringLiteral("Trivariate fit failed: %1").arg(r.error));
+        return;
+    }
+
+    const QFileInfo fi(m_loadedPath);
+    QString err;
+    Trivariate tv = HarmonicFit::toTrivariate(r, QStringLiteral("fit of %1").arg(fi.completeBaseName()), &err);
+    if (!tv.isValid()) {
+        setError(err);
+        return;
+    }
+    const HarmonicFit::Check ck = HarmonicFit::checkJacobian(tv);
+    const HarmonicFit::Deviation dev = HarmonicFit::surfaceDeviation(tv, m_sourceMesh);
+
+    const QString out = fi.absolutePath() + QStringLiteral("/tv_") + fi.completeBaseName() +
+                        QStringLiteral(".itd");
+    QString saveErr;
+    const bool saved = tv.saveToFile(out, &saveErr);
+
+    adoptTrivariate(std::move(tv), QStringLiteral("harmonic fit of %1").arg(m_fileName));
+    m_trivReal = true;
+
+    QString d = m_trivInfo;
+    d += QStringLiteral("\nControl mesh %1×%2×%3 · fit error %4% of the model size · "
+                        "det J > 0 at %5 of %6 samples (min/mean %7) · volume %8% of the mesh")
+             .arg(r.nu).arg(r.nv).arg(r.nw)
+             .arg(100.0 * r.fitError, 0, 'f', 2)
+             .arg(ck.samples - ck.nonPositive).arg(ck.samples)
+             .arg(ck.minRatio, 0, 'f', 3)
+             .arg(r.meshVolume > 0 ? 100.0 * std::fabs(ck.volume) / r.meshVolume : 0.0, 0, 'f', 1);
+    d += QStringLiteral("\nDistance model → trivariate (of the model size): mean %1% · 95% of vertices "
+                        "within %2% · worst %3%")
+             .arg(100.0 * dev.mean, 0, 'f', 2).arg(100.0 * dev.p95, 0, 'f', 2).arg(100.0 * dev.max, 0, 'f', 2);
+    for (const QString &n : r.notes)
+        if (n.contains(QStringLiteral("branch")) || n.contains(QStringLiteral("genus")) ||
+            n.contains(QStringLiteral("w-paths")) || n.contains(QStringLiteral("caps")))
+            d += QStringLiteral("\n") + n;
+    d += saved ? QStringLiteral("\nSaved as %1 · Random now divides D (BSP in D).").arg(QFileInfo(out).fileName())
+               : QStringLiteral("\nNot saved: %1").arg(saveErr);
+    m_detail = d;
+    emit statusChanged();
+}
+
+// One trivariate per part of the limb split: a multi-block V-rep. A part
+// whose fit fails is reported and skipped; the rest still form the model.
+void AppController::finishPartsFit(const QVector<HarmonicFit::Result> &fitted)
+{
+    const QFileInfo fi(m_loadedPath);
+    // Limbs snapped onto the part they were cut from, so the blocks meet.
+    QVector<HarmonicFit::Result> all = fitted;
+    QStringList joins;
+    m_blocksEnclose = m_encloseTrim;
+    if (!m_encloseTrim) HarmonicFit::snapParts(&all, m_parts, &joins);
+    for (const QString &n : joins) qInfo().noquote() << QStringLiteral("FIT  ") + n;
+    std::vector<Trivariate> blocks;
+    QStringList names, lines;
+    QVector<double> vols;
+    QVector<int> blockPart;
+    QVector<HarmonicFit::Result> blockFits;
+    int failed = 0;
+    for (int i = 0; i < all.size() && i < m_parts.size(); ++i) {
+        const HarmonicFit::Result &r = all[i];
+        const QString name = m_parts[i].name;
+        for (const QString &n : r.notes)
+            qInfo().noquote() << QStringLiteral("FIT  %1: ").arg(name) + n;
+        if (!r.ok) {
+            qWarning().noquote() << QStringLiteral("FIT  %1 skipped: %2").arg(name, r.error);
+            lines << QStringLiteral("%1: fit failed (%2) - skipped").arg(name, r.error);
+            ++failed;
+            continue;
+        }
+        QString err;
+        Trivariate tv = HarmonicFit::toTrivariate(r, name, &err);
+        if (!tv.isValid()) {
+            lines << QStringLiteral("%1: %2 - skipped").arg(name, err);
+            ++failed;
+            continue;
+        }
+        const HarmonicFit::Check ck = HarmonicFit::checkJacobian(tv);
+        double worst = 0.0;
+        const int outN = HarmonicFit::outsideCount(r, m_parts[i].mesh, &worst);
+        // More than 1% of the samples folded: the block turns inside out in
+        // places and its pieces are not valid solids there - say so.
+        const bool folded = ck.samples > 0 && ck.nonPositive > ck.samples / 100;
+        const HarmonicFit::Deviation dev = HarmonicFit::surfaceDeviation(tv, m_parts[i].mesh);
+        Q_UNUSED(outN);
+        lines << QStringLiteral("%1%6: folds (det J < 0) at %2 of %3 samples · volume %4% of the part · distance mean %5%")
+                     .arg(name).arg(ck.nonPositive).arg(ck.samples)
+                     .arg(r.meshVolume > 0 ? 100.0 * std::fabs(ck.volume) / r.meshVolume : 0.0, 0, 'f', 1)
+                     .arg(100.0 * dev.mean, 0, 'f', 2)
+                     .arg(folded ? QStringLiteral(" - FOLDED, not usable as is") : QString());
+        vols.append(std::fabs(ck.volume));
+        names << name;
+        blockPart.append(i);
+        blockFits.append(r);
+        blocks.push_back(std::move(tv));
+    }
+    if (blocks.empty()) {
+        setError(QStringLiteral("No part could be fitted: %1").arg(lines.join(QStringLiteral("; "))));
+        return;
+    }
+
+    QVector<const Trivariate *> ptrs;
+    for (const Trivariate &t : blocks) ptrs.append(&t);
+    const QString out = fi.absolutePath() + QStringLiteral("/tv_") + fi.completeBaseName() + QStringLiteral("_parts.itd");
+    QString saveErr;
+    const bool saved = Trivariate::saveAll(ptrs, names, out, &saveErr);
+
+    int biggest = 0;
+    for (int b = 1; b < vols.size(); ++b) if (vols[b] > vols[biggest]) biggest = b;
+    adoptTrivariate(blocks[biggest].clone(),
+                    QStringLiteral("%1 trivariates fitted to the parts of %2").arg(blocks.size()).arg(m_fileName));
+    m_blocks = std::move(blocks);
+    m_blockNames = names;
+    m_blockVol = vols;
+    m_blockPart = blockPart;
+    m_blockFits = blockFits;
+    m_trivReal = true;
+
+    // Show every block, not only the copy in m_triv.
+    {
+        MeshData merged;
+        for (const Trivariate &t : m_blocks) {
+            MeshData md;
+            QString err;
+            if (!t.tessellate(&md, fineNessFor(kModelFineNess), &err)) continue;
+            const uint32_t base = uint32_t(merged.pos.size() / 3);
+            merged.pos += md.pos;
+            for (uint32_t x : md.tris) merged.tris.append(x + base);
+            for (uint32_t x : md.edges) merged.edges.append(x + base);
+        }
+        if (!merged.isEmpty()) {
+            merged.computeBounds();
+            merged.computeNormals();
+            m_mesh = merged;
+            emit meshChanged();
+        }
+    }
+
+
+    QString d = QStringLiteral("%1 part(s) fitted, %2 failed · each block starts (u = 0) on its largest cap; "
+                               "%3 limb(s) joined onto the part they were cut from · a block divided into one "
+                               "piece gives exactly its part of %4")
+                    .arg(m_blocks.size()).arg(failed).arg(joins.size()).arg(m_fileName);
+    d += QStringLiteral("\n") + lines.join(QStringLiteral("\n"));
+    d += saved ? QStringLiteral("\nSaved as %1 · Random now divides every block in its own D.").arg(QFileInfo(out).fileName())
+               : QStringLiteral("\nNot saved: %1").arg(saveErr);
+    m_status = QStringLiteral("%1 — %2 trivariate block(s)").arg(m_fileName).arg(m_blocks.size());
+    m_detail = d;
+    m_hasError = false;
+    emit statusChanged();
 }
 
 void AppController::showWholeModel()
 {
     m_pieces.clear();
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
     m_planFigures.clear();
     m_planFolderUrl.clear();
     m_reportUrl.clear();
@@ -235,6 +612,45 @@ void AppController::savePieces(const QUrl &url, bool separateFiles,
     for (const QString &line : r.problems)
         qDebug().noquote() << QStringLiteral("SAVE  ") + line;
 
+    // BSP in D pieces are sub-trivariates of M: write them as such too, so the
+    // result stays a V-rep (IRIT can trim, glue or analyse them further).
+    QString vrepNote;
+    if (!m_vrepCells.isEmpty() && m_triv.isValid() &&
+        QFileInfo(path).suffix().compare(QStringLiteral("itd"), Qt::CaseInsensitive) == 0) {
+        std::vector<Trivariate> subs;
+        QVector<const Trivariate *> ptrs;
+        QStringList names;
+        subs.reserve(m_vrepCells.size());
+        int failed = 0;
+        for (int c = 0; c < m_vrepCells.size(); ++c) {
+            const CellBox &cb = m_vrepCells[c];
+            const Trivariate &src = (c < m_vrepBlockOf.size() && m_vrepBlockOf[c] < int(m_blocks.size()))
+                                        ? m_blocks[size_t(m_vrepBlockOf[c])] : m_triv;
+            Trivariate t = src.subRegion(cb.lo[0], cb.hi[0], cb.lo[1], cb.hi[1], cb.lo[2], cb.hi[2]);
+            if (!t.isValid()) {
+                qWarning().noquote() << QStringLiteral("SAVE  piece %1: sub-trivariate failed (%2) - skipped")
+                                            .arg(c).arg(IritGuard::lastError());
+                ++failed;
+                continue;
+            }
+            names << (m_vrepBlockOf.isEmpty() ? QStringLiteral("piece_%1").arg(c)
+                                              : QStringLiteral("piece_%1_%2").arg(c < m_vrepPieceOf.size() ? m_vrepPieceOf[c] : c)
+                                                    .arg(m_blockNames.value(m_vrepBlockOf[c])).replace(QLatin1Char(' '), QLatin1Char('_')));
+            subs.push_back(std::move(t));
+        }
+        for (const Trivariate &t : subs) ptrs.append(&t);
+        const QFileInfo fi(path);
+        const QString vpath = fi.absolutePath() + QStringLiteral("/") + fi.completeBaseName() +
+                              QStringLiteral("_vrep.itd");
+        QString verr;
+        if (!ptrs.isEmpty() && Trivariate::saveAll(ptrs, names, vpath, &verr))
+            vrepNote = QStringLiteral(" · %1 V-rep trivariate(s) in %2%3")
+                           .arg(ptrs.size()).arg(QFileInfo(vpath).fileName())
+                           .arg(failed ? QStringLiteral(" (%1 failed)").arg(failed) : QString());
+        else
+            vrepNote = QStringLiteral(" · V-rep pieces not written: %1").arg(verr);
+    }
+
     m_status = QStringLiteral("Saved %1 piece(s) to %2")
                    .arg(r.written).arg(QFileInfo(path).fileName());
     m_detail = QStringLiteral("%1 · %2 piece(s) written%3%4")
@@ -250,6 +666,7 @@ void AppController::savePieces(const QUrl &url, bool separateFiles,
                             .arg(r.spread
                                      ? QStringLiteral(" · spread out for slicing")
                                      : QString()));
+    m_detail += vrepNote;
     m_hasError = false;
     emit statusChanged();
 }
@@ -441,6 +858,255 @@ void AppController::trimPiecesToModel()
 
 // The V-rep path for an explicit cell list - what the BSP produces - followed by
 // the same section 5 trim.
+// BSP of the real trivariate's parameter domain D (CurvedBsp): the cells are
+// born in D, each piece is meshed in D and every vertex mapped through M, so M
+// alone shapes the cuts. The bend of the splits is not a user setting: it stays
+// 0 (flat cuts in D) until it is chosen automatically, e.g. by simulated
+// annealing on the blocking analysis. The analysis itself lives in the
+// "Analyse puzzle" window.
+void AppController::runBspInD(int pieces)
+{
+    QElapsedTimer timer;
+    timer.start();
+
+    pieces = qBound(2, pieces, 64);            // one sub-trivariate per piece
+
+    if (m_blocks.size() > 1 && !m_parts.isEmpty()) {
+        // Several blocks, one per part of the limb split. Each part gets pieces
+        // by its share of the model's volume; a part whose share rounds to
+        // none is glued to the part it was cut from (whole parts: at their
+        // shared cap; onto a cut part: to the piece holding its cap) - so the
+        // count asked for is the count made, and joints are cuts only where
+        // pieces really meet. Parts with pieces are cut in their block's D
+        // (CutInD): the outside of every piece is the model's own surface.
+        const int P = m_parts.size();
+        QVector<int> partBlock(P, -1);
+        for (int bi = 0; bi < m_blockPart.size(); ++bi)
+            if (m_blockPart[bi] >= 0 && m_blockPart[bi] < P) partBlock[m_blockPart[bi]] = bi;
+        auto sameCap = [](const HarmonicFit::Cap &x, const HarmonicFit::Cap &y) {
+            return std::fabs(x.centre[0] - y.centre[0]) < 1e-5 && std::fabs(x.centre[1] - y.centre[1]) < 1e-5 &&
+                   std::fabs(x.centre[2] - y.centre[2]) < 1e-5;
+        };
+        // The part tree: the body (part 0) at the root, parents across shared caps.
+        QVector<int> parent(P, -1), depth(P, -1);
+        QVector<HarmonicFit::Cap> joint(P);
+        {
+            QVector<int> queue{ 0 };
+            depth[0] = 0;
+            for (int qi = 0; qi < queue.size(); ++qi) {
+                const int p = queue[qi];
+                for (int q = 0; q < P; ++q) {
+                    if (depth[q] >= 0) continue;
+                    for (const auto &cq : m_parts[q].caps) {
+                        bool shared = false;
+                        for (const auto &cp : m_parts[p].caps) if (sameCap(cp, cq)) { shared = true; break; }
+                        if (!shared) continue;
+                        parent[q] = p;
+                        joint[q] = cq;
+                        depth[q] = depth[p] + 1;
+                        queue.append(q);
+                        break;
+                    }
+                }
+            }
+        }
+        // Pieces per part, by volume.
+        QVector<double> vol(P, 0.0);
+        double total = 0.0;
+        for (int p = 0; p < P; ++p) { vol[p] = std::fabs(IritSolid::signedVolume(m_parts[p].mesh)); total += vol[p]; }
+        QVector<int> n(P, 0);
+        int roots = 0;
+        for (int p = 0; p < P; ++p) if (parent[p] < 0) ++roots;
+        int given = 0;
+        for (int p = 0; p < P; ++p)
+            if (parent[p] >= 0) { n[p] = int(std::floor(pieces * vol[p] / std::max(1e-30, total) + 0.5)); given += n[p]; }
+        while (given > pieces - roots) {                           // too many: the smallest give theirs up
+            int sm = -1;
+            for (int p = 0; p < P; ++p) if (parent[p] >= 0 && n[p] > 0 && (sm < 0 || vol[p] < vol[sm])) sm = p;
+            if (sm < 0) break;
+            --n[sm];
+            --given;
+        }
+        {
+            int left = std::max(roots, pieces - given);
+            QVector<int> rootIdx;
+            for (int p = 0; p < P; ++p) if (parent[p] < 0) { n[p] = 1; --left; rootIdx.append(p); }
+            std::sort(rootIdx.begin(), rootIdx.end(), [&](int x, int y) { return vol[x] > vol[y]; });
+            if (!rootIdx.isEmpty()) n[rootIdx.front()] += std::max(0, left);
+        }
+
+        // Leaves first: a part with no pieces joins its parent - whole to whole
+        // at the cap, or waits to be attached after its parent is cut.
+        QVector<MeshData> whole(P);
+        QVector<QVector<int>> cellsOf(P);          // the parts whose blocks a (whole) part now holds
+        for (int p = 0; p < P; ++p) { whole[p] = m_parts[p].mesh; cellsOf[p] = { p }; }
+        QVector<QVector<int>> pending(P);
+        QVector<int> order(P);
+        for (int p = 0; p < P; ++p) order[p] = p;
+        std::sort(order.begin(), order.end(), [&](int x, int y) { return depth[x] > depth[y]; });
+        QStringList warnings;
+        int glued = 0;
+        for (int p : order) {
+            if (n[p] > 0 || parent[p] < 0) continue;
+            const int q = parent[p];
+            if (n[q] == 0) {
+                QString why;
+                MeshData u = CutInD::unionAtCap(whole[q], whole[p], joint[p].centre, &why);
+                if (u.isEmpty()) {
+                    warnings << QStringLiteral("%1 could not be glued to %2 (%3) - kept as its own piece")
+                                    .arg(m_parts[p].name, m_parts[q].name, why);
+                    n[p] = 1;
+                    continue;
+                }
+                whole[q] = u;
+                cellsOf[q] += cellsOf[p];
+                ++glued;
+            } else {
+                pending[q].append(p);
+            }
+        }
+
+        // Parts with pieces: cut in D (or whole, for one piece), then the
+        // waiting parts attached.
+        QVector<PuzzlePiece> all;
+        QVector<CellBox> allCells;
+        QVector<int> blockOf, pieceOf;
+        int openEdges = 0;
+        double piecesVol = 0.0;
+        for (int p = 0; p < P; ++p) {
+            if (n[p] <= 0) continue;
+            QVector<MeshData> meshes;
+            QVector<QVector<QPair<int, CellBox>>> cells;          // per piece: (part, its cell)
+            const int bi = partBlock[p];
+            if (n[p] > 1 && bi >= 0 && bi < m_blockFits.size()) {
+                const CutInD::Result cr = CutInD::cut(whole[p], m_blockFits[bi], n[p], m_layoutSeed + quint32(p));
+                for (const QString &nt : cr.notes)
+                    qInfo().noquote() << QStringLiteral("CUTD  %1: ").arg(m_parts[p].name) + nt;
+                if (cr.ok) {
+                    for (const CutInD::Piece &cp : cr.pieces) {
+                        meshes.append(cp.mesh);
+                        CellBox cb;
+                        for (int ax = 0; ax < 3; ++ax) { cb.lo[ax] = cp.lo[ax]; cb.hi[ax] = cp.hi[ax]; }
+                        cells.append({ qMakePair(p, cb) });
+                    }
+                } else {
+                    warnings << QStringLiteral("%1: cut in D failed (%2) - one piece").arg(m_parts[p].name, cr.error);
+                }
+            }
+            if (meshes.isEmpty()) {
+                meshes.append(whole[p]);
+                QVector<QPair<int, CellBox>> c;
+                for (int q : cellsOf[p]) { CellBox cb; for (int ax = 0; ax < 3; ++ax) { cb.lo[ax] = 0; cb.hi[ax] = 1; } c.append(qMakePair(q, cb)); }
+                cells.append(c);
+            }
+            for (int c : pending[p]) {
+                QString why;
+                const int t = CutInD::attachAtCap(&meshes, whole[c], joint[c].centre, &why);
+                if (t < 0) {
+                    warnings << QStringLiteral("%1 could not be glued to %2 (%3) - kept as its own piece")
+                                    .arg(m_parts[c].name, m_parts[p].name, why);
+                    meshes.append(whole[c]);
+                    QVector<QPair<int, CellBox>> cc;
+                    for (int q : cellsOf[c]) { CellBox cb; for (int ax = 0; ax < 3; ++ax) { cb.lo[ax] = 0; cb.hi[ax] = 1; } cc.append(qMakePair(q, cb)); }
+                    cells.append(cc);
+                    continue;
+                }
+                for (int q : cellsOf[c]) { CellBox cb; for (int ax = 0; ax < 3; ++ax) { cb.lo[ax] = 0; cb.hi[ax] = 1; } cells[t].append(qMakePair(q, cb)); }
+                ++glued;
+            }
+            for (int k = 0; k < meshes.size(); ++k) {
+                PuzzlePiece pc;
+                pc.i = all.size();
+                pc.mesh = meshes[k];
+                for (int ax = 0; ax < 3; ++ax) {
+                    pc.centre[ax] = 0.5f * (pc.mesh.bmin[ax] + pc.mesh.bmax[ax]);
+                    pc.size[ax]   = pc.mesh.bmax[ax] - pc.mesh.bmin[ax];
+                }
+                openEdges += CutInD::openEdges(pc.mesh);
+                piecesVol += std::fabs(IritSolid::signedVolume(pc.mesh));
+                for (const auto &pr : cells[k]) {
+                    if (partBlock[pr.first] < 0) continue;
+                    allCells.append(pr.second);
+                    blockOf.append(partBlock[pr.first]);
+                    pieceOf.append(all.size());
+                }
+                all.append(std::move(pc));
+            }
+        }
+        if (all.isEmpty()) {
+            setError(QStringLiteral("No pieces. %1").arg(warnings.join(QStringLiteral("; "))));
+            return;
+        }
+        m_pieces = std::move(all);
+        m_vrepCells = allCells;
+        m_vrepBlockOf = blockOf;
+        m_vrepPieceOf = pieceOf;
+        m_planFigures.clear();
+        m_planFolderUrl.clear();
+        m_reportUrl.clear();
+        m_jointNote.clear();
+        QStringList plan;
+        for (int p = 0; p < P; ++p) if (n[p] > 0) plan << QStringLiteral("%1 %2").arg(m_parts[p].name).arg(n[p]);
+        m_divisionInfo = QStringLiteral("Cut in D: %1 of %8 pieces (%2) · %3 part(s) glued on · volume %4% of the model · "
+                                        "%5 open edge(s) · seed %6 · %7 ms")
+                             .arg(m_pieces.size()).arg(plan.join(QStringLiteral(", "))).arg(glued)
+                             .arg(total > 0 ? 100.0 * piecesVol / total : 0.0, 0, 'f', 3)
+                             .arg(openEdges).arg(m_layoutSeed).arg(timer.elapsed()).arg(pieces);
+        if (m_pieces.size() < pieces)
+            warnings << QStringLiteral("%1 cut(s) could not be made cleanly (the part's map into D folds there) - "
+                                       "fewer pieces than asked").arg(pieces - m_pieces.size());
+        if (openEdges > 0)
+            warnings << QStringLiteral("%1 open edge(s): some joints or cut faces are not watertight yet").arg(openEdges);
+        if (!warnings.isEmpty()) m_divisionInfo += QStringLiteral("\n") + warnings.join(QStringLiteral("\n"));
+        m_divisionInfo += QStringLiteral("\nSave as .itd to also get the pieces as trivariates (*_vrep.itd).");
+        m_status   = QStringLiteral("%1 — %2 pieces").arg(m_fileName).arg(m_pieces.size());
+        m_detail   = m_divisionInfo;
+        m_hasError = false;
+        emit piecesChanged();
+        emit statusChanged();
+        return;
+    }
+
+    double dom[6];
+    m_triv.domain(dom);
+
+    // Flat cuts in D (the bend is 0 until it is chosen automatically, e.g. by
+    // simulated annealing on the blocking analysis). A flat-cut BSP leaf is a
+    // box of D, so each piece is the EXACT sub-trivariate M restricted to it -
+    // a V-rep piece, curved in R^3 only by M. Same tree as CurvedBsp::build and
+    // the analyzer's "BSP in D" (same seed, same jitter), so piece ids match.
+    const QVector<CellBox> cells = PuzzleDivider::buildBspCells(dom, pieces, 0.25, m_layoutSeed);
+    QVector<PuzzlePiece> out;
+    QString warning;
+    if (!PuzzleDivider::divideCells(m_triv, cells, fineNessFor(kPieceFineNess, 1.0), &out, &warning)) {
+        setError(warning.isEmpty() ? QStringLiteral("The BSP in D produced no pieces.") : warning);
+        return;
+    }
+
+    m_pieces = std::move(out);
+    m_vrepCells = cells;
+    m_planFigures.clear();
+    m_planFolderUrl.clear();
+    m_reportUrl.clear();
+    m_jointNote.clear();
+
+    m_divisionInfo = QStringLiteral("BSP in D of %1 · %2 pieces · seed %3 · each piece a sub-trivariate "
+                                    "(V-rep) of M · flat cuts in D, curved in R³ by M · %4 ms")
+                         .arg(m_triv.label()).arg(m_pieces.size()).arg(m_layoutSeed)
+                         .arg(timer.elapsed());
+    if (!warning.isEmpty())
+        m_divisionInfo += QStringLiteral(" · ") + warning;
+    m_divisionInfo += QStringLiteral("\nSave as .itd to also get the pieces as trivariates (*_vrep.itd). "
+                                     "Blocking analysis: \"Analyse puzzle…\" (BSP in D).");
+
+    m_status   = QStringLiteral("%1 — %2 pieces (BSP in D)").arg(m_fileName).arg(m_pieces.size());
+    m_detail   = m_divisionInfo;
+    m_hasError = false;
+
+    emit piecesChanged();
+    emit statusChanged();
+}
+
 void AppController::runTrivCellDivision(const QVector<CellBox> &cells,
                                         const QString &note)
 {
@@ -633,6 +1299,9 @@ void AppController::divideUniform(int nu, int nv, int nw)
 
     const int counts[3] = { qBound(1, nu, 64), qBound(1, nv, 64), qBound(1, nw, 64) };
 
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
     m_lastKind      = LastDivision::Uniform;
     m_lastCounts[0] = counts[0];
     m_lastCounts[1] = counts[1];
@@ -660,6 +1329,9 @@ void AppController::divideBySize(double maxSizeMM, int maxPerAxis)
     const double budget[3] = { maxSizeMM, maxSizeMM, maxSizeMM };
     const int    cap       = qBound(1, maxPerAxis, 64);
 
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
     m_lastKind    = LastDivision::BySize;
     m_lastMaxSize = maxSizeMM;
     m_lastMaxAxis = cap;
@@ -685,6 +1357,9 @@ void AppController::divideRandom(int pieces)
 {
     const int target = qBound(1, pieces, 2048);
 
+    m_vrepCells.clear();
+    m_vrepBlockOf.clear();
+    m_vrepPieceOf.clear();
     m_lastKind   = LastDivision::Random;
     m_lastPieces = target;
 
@@ -694,6 +1369,11 @@ void AppController::divideRandom(int pieces)
     m_stats.seed      = m_layoutSeed;
 
     m_warp.enabled = false;
+
+    if (m_triv.isValid() && m_trivReal) {
+        runBspInD(target);
+        return;
+    }
 
     if (m_triv.isValid()) {
         double dom[6];

@@ -90,14 +90,49 @@ ApplicationWindow {
                         }
                     }
 
+                    // What M is: a real trivariate that bends, or a box.
+                    Body {
+                        visible: pa.trivariateText.length > 0
+                        text: pa.trivariateText
+                        color: pa.trivariateFlat ? "#e88" : "#9cc07e"
+                        font.pixelSize: 11
+                    }
+
                     // --- division --------------------------------------------
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 4
-                        Label { text: "Division u·v·w"; color: "#ccc" }
+                        Label { text: "Division"; color: "#ccc" }
+                        ComboBox {
+                            id: divMode
+                            Layout.fillWidth: true
+                            model: [ "BSP in D", "Grid u·v·w in D" ]
+                            currentIndex: 0
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+                        visible: divMode.currentIndex === 1
+                        Label { text: "Cells u·v·w"; color: "#ccc" }
                         SpinBox { id: nu; from: 1; to: 8; value: 2; editable: true; Layout.preferredWidth: 86 }
                         SpinBox { id: nv; from: 1; to: 8; value: 2; editable: true; Layout.preferredWidth: 86 }
                         SpinBox { id: nw; from: 1; to: 8; value: 2; editable: true; Layout.preferredWidth: 86 }
+                    }
+                    GridLayout {
+                        Layout.fillWidth: true
+                        visible: divMode.currentIndex === 0
+                        columns: 4
+                        columnSpacing: 8
+                        Label { text: "Pieces"; color: "#ccc" }
+                        SpinBox { id: bspPieces; from: 2; to: 12; value: 8; editable: true; Layout.preferredWidth: 96 }
+                        Label { text: "Layout"; color: "#ccc" }
+                        SpinBox {
+                            id: bspSeed; from: 1; to: 9999; value: 1; editable: true; Layout.preferredWidth: 110
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Which random BSP layout - same number, same cuts"
+                        }
+
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -115,7 +150,11 @@ ApplicationWindow {
                             text: "Analyse"
                             highlighted: true
                             enabled: !pa.busy && pa.fileName.length > 0
-                            onClicked: pa.run(nu.value, nv.value, nw.value, dirs.value)
+                            onClicked: divMode.currentIndex === 0
+                                       // Flat cuts in D for now; the bend will be chosen
+                                       // automatically, not set by hand.
+                                       ? pa.runBsp(bspPieces.value, 0.0, 1, bspSeed.value, dirs.value)
+                                       : pa.run(nu.value, nv.value, nw.value, dirs.value)
                         }
                     }
                     Body {

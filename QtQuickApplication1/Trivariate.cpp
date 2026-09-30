@@ -13,6 +13,7 @@
 extern "C" {
 #include "inc_irit/triv_lib.h"
 #include "inc_irit/cagd_lib.h"
+#include "inc_irit/allocate.h"
 }
 
 Trivariate::~Trivariate()
@@ -71,6 +72,24 @@ void Trivariate::orders(int o[3]) const
     o[0] = tv -> UOrder;
     o[1] = tv -> VOrder;
     o[2] = tv -> WOrder;
+}
+
+Trivariate Trivariate::clone() const
+{
+    if (m_tv == nullptr)
+        return Trivariate();
+    return adopt(IritTrivTVCopy(static_cast<const TrivTVStruct *>(m_tv)), m_label);
+}
+
+void Trivariate::lengths(int l[3]) const
+{
+    l[0] = l[1] = l[2] = 0;
+    if (m_tv == nullptr)
+        return;
+    const TrivTVStruct *tv = static_cast<const TrivTVStruct *>(m_tv);
+    l[0] = tv -> ULength;
+    l[1] = tv -> VLength;
+    l[2] = tv -> WLength;
 }
 
 bool Trivariate::evaluate(double u, double v, double w, double p[3]) const
@@ -323,5 +342,77 @@ bool Trivariate::saveToFile(const QString& path, QString* error) const
     IritPrsrFreeObject(pObj);
     IritPrsrCloseStream(handler, TRUE);
 
+    return true;
+}
+
+namespace {
+
+struct SubRegionCtx {
+    const TrivTVStruct *src;
+    double              lo[3], hi[3];
+    TrivTVStruct       *result;
+};
+
+// Inside IritGuard: IritTrivTVRegionFromTV can raise a fatal error.
+void doSubRegion(void *v)
+{
+    SubRegionCtx *c = static_cast<SubRegionCtx *>(v);
+    static const TrivTVDirType kDir[3] = { TRIV_CONST_U_DIR, TRIV_CONST_V_DIR, TRIV_CONST_W_DIR };
+    c -> result = NULL;
+    const TrivTVStruct *cur = c -> src;
+    TrivTVStruct *owned = NULL;
+    for (int a = 0; a < 3; ++a) {
+        TrivTVStruct *next = IritTrivTVRegionFromTV(cur, c -> lo[a], c -> hi[a], kDir[a]);
+        if (owned != NULL)
+            IritTrivTVFree(owned);
+        if (next == NULL)
+            return;
+        owned = next;
+        cur   = next;
+    }
+    c -> result = owned;
+}
+
+}
+
+// The exact sub-trivariate over a box of D: a V-rep piece, not a mesh.
+Trivariate Trivariate::subRegion(double u0, double u1, double v0, double v1,
+                                 double w0, double w1) const
+{
+    if (m_tv == nullptr || u1 <= u0 || v1 <= v0 || w1 <= w0)
+        return Trivariate();
+    SubRegionCtx c;
+    c.src = static_cast<const TrivTVStruct *>(m_tv);
+    c.lo[0] = u0; c.hi[0] = u1;
+    c.lo[1] = v0; c.hi[1] = v1;
+    c.lo[2] = w0; c.hi[2] = w1;
+    c.result = NULL;
+    if (!IritGuard::run(&c, doSubRegion) || c.result == NULL)
+        return Trivariate();
+    return adopt(c.result, m_label + QStringLiteral(" region"));
+}
+
+// Several trivariates in one .itd, each a named object (piece_0, piece_1, ...).
+bool Trivariate::saveAll(const QVector<const Trivariate *> &tvs, const QStringList &names,
+                         const QString &path, QString *error)
+{
+    int handler = IritPrsrOpenDataFile(path.toUtf8().constData(), FALSE, FALSE);
+    if (handler < 0) {
+        if (error) *error = QStringLiteral("Could not open file for writing: %1").arg(path);
+        return false;
+    }
+    for (int i = 0; i < tvs.size(); ++i) {
+        if (tvs[i] == nullptr || !tvs[i]->isValid())
+            continue;
+        IritPrsrObjectStruct *obj =
+            IritPrsrGenTRIVARObject(IritTrivTVCopy(static_cast<TrivTVStruct *>(tvs[i]->raw())));
+        if (obj == NULL)
+            continue;
+        const QByteArray name = (i < names.size() ? names[i] : QStringLiteral("tv_%1").arg(i)).toUtf8();
+        IRIT_PRSR_SET_OBJ_NAME2(obj, name.constData());
+        IritPrsrPutObjectToHandler(handler, obj);
+        IritPrsrFreeObject(obj);
+    }
+    IritPrsrCloseStream(handler, TRUE);
     return true;
 }

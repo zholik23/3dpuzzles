@@ -143,6 +143,9 @@
     <ClCompile Include="PlannerOrder.cpp" />
     <ClCompile Include="PuzzleDivider.cpp" />
     <ClCompile Include="PuzzleAnalyzer.cpp" />
+    <ClCompile Include="CurvedBsp.cpp" />
+    <ClCompile Include="HarmonicFit.cpp" />
+    <ClCompile Include="CutInD.cpp" />
     <ClCompile Include="Trivariate.cpp" />
     <None Include="scripts\spiral_joint_gen.irt" />
     <None Include="scripts\spiral_test.irt" />
@@ -153,6 +156,9 @@
     <ClInclude Include="AssemblyOrder.h" />
     <ClInclude Include="CageBoolean.h" />
     <ClInclude Include="DbgAnalysis.h" />
+    <ClInclude Include="CurvedBsp.h" />
+    <ClInclude Include="HarmonicFit.h" />
+    <ClInclude Include="CutInD.h" />
     <ClInclude Include="MaterialField.h" />
     <ClInclude Include="PieceExport.h" />
     <ClInclude Include="IritSolid.h" />

@@ -4,12 +4,16 @@
 
 #include "DbgAnalysis.h"
 
+#include "CurvedBsp.h"
+
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -158,40 +162,14 @@ inline double clearanceDeg(double sinc)
     return std::asin(std::clamp(sinc, -1.0, 1.0)) * 180.0 / 3.14159265358979323846;
 }
 
-}  // namespace
-
-DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
+// The Jacobian of M over the whole domain, boundary included.
+void measureJacobian(const Trivariate &tv, const DbgOptions &opt, DbgReport &rep)
 {
-    DbgReport rep;
-    if (!tv.isValid()) {
-        rep.error = QStringLiteral("trivariate is not valid");
-        return rep;
-    }
-
     double dom[6];
     tv.domain(dom);
-    for (int a = 0; a < 3; ++a)
-        if (!(dom[a * 2 + 1] > dom[a * 2])) {
-            rep.error = QStringLiteral("degenerate domain on axis %1").arg(a);
-            return rep;
-        }
-
-    const int n[3] = { std::max(1, opt.cells[0]),
-                       std::max(1, opt.cells[1]),
-                       std::max(1, opt.cells[2]) };
-    rep.pieces = n[0] * n[1] * n[2];
-
     double h[3];
     for (int a = 0; a < 3; ++a)
         h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
-
-    const auto cut = [&](int axis, int i) {
-        const double lo = dom[axis * 2], hi = dom[axis * 2 + 1];
-        return lo + (hi - lo) * double(i) / double(n[axis]);
-    };
-    const auto pieceAt = [&](int i, int j, int k) {
-        return (i * n[1] + j) * n[2] + k;
-    };
 
     // --- Jacobian of M over the domain -------------------------------------
     //
@@ -231,7 +209,20 @@ DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
                 }
             }
     rep.jacobianOk = rep.minDetJ > 0.0;
+}
 
+// One shared face between two pieces, before analysis: which pieces, and
+// the normals sampled on it (unit, outward from the low-side piece a).
+struct RawInterface {
+    DbgPair          pair;
+    std::vector<V3>  norms;
+};
+
+// Everything after the interfaces: per-pair verdicts, then every group,
+// the openings, single key and level k, and one take-apart. It does not
+// care how the pieces were cut - a grid or a curved BSP feeds it alike.
+void finishBlocking(DbgReport &rep, const DbgOptions &opt, std::vector<RawInterface> &in)
+{
     // --- interfaces ---------------------------------------------------------
     //
     // Only interior cuts are shared between two pieces; the outer boundary of
@@ -257,127 +248,74 @@ DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
     std::vector<int> ifA, ifB;
     std::vector<std::vector<V3>> ifNorms;   // outward from the low-side piece
 
-    for (int axis = 0; axis < 3; ++axis) {
-        const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+    for (RawInterface &ri : in) {
+        DbgPair pr = ri.pair;
+        std::vector<V3> &norms = ri.norms;
+        if (norms.empty())
+            continue;
+        pr.normals = int(norms.size());
 
-        for (int c = 1; c < n[axis]; ++c) {
-            const double plane = cut(axis, c);
+        V3 mean { 0, 0, 0 };
+        for (const V3 &nv : norms) { mean.x += nv.x; mean.y += nv.y; mean.z += nv.z; }
+        mean = unit(mean);
+        double worst = 0.0;
+        for (const V3 &nv : norms)
+            worst = std::max(worst,
+                             std::acos(std::clamp(dot(nv, mean), -1.0, 1.0)));
+        pr.spreadDeg = worst * 180.0 / 3.14159265358979323846;
 
-            for (int iu = 0; iu < n[u]; ++iu)
-                for (int iv = 0; iv < n[v]; ++iv) {
-                    int loIdx[3], hiIdx[3];
-                    loIdx[axis] = c - 1;  hiIdx[axis] = c;
-                    loIdx[u] = hiIdx[u] = iu;
-                    loIdx[v] = hiIdx[v] = iv;
+        const size_t base = okLow.size();
+        okLow.resize(base + nWords, 0);
+        okHigh.resize(base + nWords, 0);
+        okLowR.resize(base + nWords, 0);
+        okHighR.resize(base + nWords, 0);
 
-                    DbgPair pr;
-                    pr.axis = axis;
-                    pr.a = pieceAt(loIdx[0], loIdx[1], loIdx[2]);
-                    pr.b = pieceAt(hiIdx[0], hiIdx[1], hiIdx[2]);
-
-                    const double u0 = cut(u, iu), u1 = cut(u, iu + 1);
-                    const double v0 = cut(v, iv), v1 = cut(v, iv + 1);
-
-                    // Raw cross products first: their length is the local area
-                    // element, needed to tell a real normal from noise.
-                    std::vector<V3> raw;
-                    raw.reserve(fs * fs);
-                    for (int su = 0; su < fs; ++su)
-                        for (int sv = 0; sv < fs; ++sv) {
-                            double p[3];
-                            p[axis] = plane;
-                            p[u] = u0 + (u1 - u0) * su / double(fs - 1);
-                            p[v] = v0 + (v1 - v0) * sv / double(fs - 1);
-
-                            // n parallel to M_u x M_v for the two in-plane
-                            // axes. With det J > 0 that points along increasing
-                            // `axis`, i.e. outward from the low-side piece, and
-                            // equals J^-T applied to the domain normal without
-                            // inverting J.
-                            raw.push_back(cross(tangent(tv, p, u, dom, h[u]),
-                                                tangent(tv, p, v, dom, h[v])));
-                        }
-
-                    // Where the map degenerates - the poles of a surface of
-                    // revolution, where one tangent vanishes - the cross product
-                    // is round-off, and normalising it yields a direction that is
-                    // pure noise. Those samples cover no area, so they carry no
-                    // contact; drop them rather than let them block directions.
-                    double maxArea = 0.0;
-                    for (const V3 &c : raw) maxArea = std::max(maxArea, len(c));
-                    std::vector<V3> norms;
-                    norms.reserve(raw.size());
-                    for (const V3 &c : raw)
-                        if (len(c) > 1e-4 * maxArea)
-                            norms.push_back(unit(c));
-
-                    if (norms.empty())
-                        continue;
-                    pr.normals = int(norms.size());
-
-                    V3 mean { 0, 0, 0 };
-                    for (const V3 &nv : norms) { mean.x += nv.x; mean.y += nv.y; mean.z += nv.z; }
-                    mean = unit(mean);
-                    double worst = 0.0;
-                    for (const V3 &nv : norms)
-                        worst = std::max(worst,
-                                         std::acos(std::clamp(dot(nv, mean), -1.0, 1.0)));
-                    pr.spreadDeg = worst * 180.0 / 3.14159265358979323846;
-
-                    const size_t base = okLow.size();
-                    okLow.resize(base + nWords, 0);
-                    okHigh.resize(base + nWords, 0);
-                    okLowR.resize(base + nWords, 0);
-                    okHighR.resize(base + nWords, 0);
-
-                    int lowCount = 0, highCount = 0;
-                    for (int d = 0; d < nDirs; ++d) {
-                        bool lo = true, hi = true, loR = true, hiR = true;
-                        for (const V3 &nv : norms) {
-                            const double s = dot(dirs[d], nv);
-                            if (s >  opt.touch) lo = false;   // low side moves: d.n <= 0
-                            if (s < -opt.touch) hi = false;   // high side: (-d).n <= 0
-                            if (s >  slack) loR = false;
-                            if (s < -slack) hiR = false;
-                            if (!loR && !hiR) break;
-                        }
-                        const uint64_t bit = uint64_t(1) << (d % 64);
-                        if (lo)  { okLow [base + d / 64] |= bit; ++lowCount; }
-                        if (hi)  { okHigh[base + d / 64] |= bit; ++highCount; }
-                        if (loR) okLowR [base + d / 64] |= bit;
-                        if (hiR) okHighR[base + d / 64] |= bit;
-                    }
-
-                    pr.freeDirs = lowCount;
-                    (void)highCount;
-
-                    // Blocked or not is decided by the clearance, not the
-                    // count: a free set thinner than the direction sampling
-                    // still counts as free.
-                    {
-                        const std::vector<const V3 *> pts { norms.data() };
-                        const std::vector<int> cnt { int(norms.size()) };
-                        const std::vector<double> sg { 1.0 };
-                        const Clearance cl = clearanceOf(pts, cnt, sg);
-                        pr.blocked = !(cl.sinc > kBlocked);
-                        pr.clearanceDeg = pr.blocked ? 0.0 : clearanceDeg(cl.sinc);
-                    }
-
-                    ifA.push_back(pr.a);
-                    ifB.push_back(pr.b);
-                    {
-                        std::vector<V3> uniq;
-                        for (const V3 &nv : norms) {
-                            bool dup = false;
-                            for (const V3 &q : uniq)
-                                if (std::fabs(q.x - nv.x) + std::fabs(q.y - nv.y) + std::fabs(q.z - nv.z) < 1e-9) { dup = true; break; }
-                            if (!dup) uniq.push_back(nv);
-                        }
-                        ifNorms.push_back(std::move(uniq));
-                    }
-                    rep.pairs.append(pr);
-                }
+        int lowCount = 0, highCount = 0;
+        for (int d = 0; d < nDirs; ++d) {
+            bool lo = true, hi = true, loR = true, hiR = true;
+            for (const V3 &nv : norms) {
+                const double s = dot(dirs[d], nv);
+                if (s >  opt.touch) lo = false;   // low side moves: d.n <= 0
+                if (s < -opt.touch) hi = false;   // high side: (-d).n <= 0
+                if (s >  slack) loR = false;
+                if (s < -slack) hiR = false;
+                if (!loR && !hiR) break;
+            }
+            const uint64_t bit = uint64_t(1) << (d % 64);
+            if (lo)  { okLow [base + d / 64] |= bit; ++lowCount; }
+            if (hi)  { okHigh[base + d / 64] |= bit; ++highCount; }
+            if (loR) okLowR [base + d / 64] |= bit;
+            if (hiR) okHighR[base + d / 64] |= bit;
         }
+
+        pr.freeDirs = lowCount;
+        (void)highCount;
+
+        // Blocked or not is decided by the clearance, not the
+        // count: a free set thinner than the direction sampling
+        // still counts as free.
+        {
+            const std::vector<const V3 *> pts { norms.data() };
+            const std::vector<int> cnt { int(norms.size()) };
+            const std::vector<double> sg { 1.0 };
+            const Clearance cl = clearanceOf(pts, cnt, sg);
+            pr.blocked = !(cl.sinc > kBlocked);
+            pr.clearanceDeg = pr.blocked ? 0.0 : clearanceDeg(cl.sinc);
+        }
+
+        ifA.push_back(pr.a);
+        ifB.push_back(pr.b);
+        {
+            std::vector<V3> uniq;
+            for (const V3 &nv : norms) {
+                bool dup = false;
+                for (const V3 &q : uniq)
+                    if (std::fabs(q.x - nv.x) + std::fabs(q.y - nv.y) + std::fabs(q.z - nv.z) < 1e-9) { dup = true; break; }
+                if (!dup) uniq.push_back(nv);
+            }
+            ifNorms.push_back(std::move(uniq));
+        }
+        rep.pairs.append(pr);
     }
 
     const int nIf = int(ifA.size());
@@ -531,38 +469,6 @@ DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
     if (!rep.singleKey)
         rep.keyPiece = -1;
 
-    // Each piece's extent in R^3, sampled over its own cell of the domain.
-    // This is what lets the analysis be checked against the deformed tiles the
-    // IRIT script writes: the analyser never reads those files, so matching
-    // boxes are the evidence that it is dividing the same puzzle.
-    rep.pieceBox.resize(rep.pieces * 6);
-    for (int i = 0; i < n[0]; ++i)
-        for (int j = 0; j < n[1]; ++j)
-            for (int k = 0; k < n[2]; ++k) {
-                const int id = pieceAt(i, j, k);
-                double lo[3] = {  1e300,  1e300,  1e300 };
-                double hi[3] = { -1e300, -1e300, -1e300 };
-                const int S = 7;
-                for (int a = 0; a <= S; ++a)
-                    for (int b = 0; b <= S; ++b)
-                        for (int c = 0; c <= S; ++c) {
-                            double p[3];
-                            p[0] = cut(0, i) + (cut(0, i + 1) - cut(0, i)) * a / S;
-                            p[1] = cut(1, j) + (cut(1, j + 1) - cut(1, j)) * b / S;
-                            p[2] = cut(2, k) + (cut(2, k + 1) - cut(2, k)) * c / S;
-                            const V3 q = evalAt(tv, p);
-                            const double e[3] = { q.x, q.y, q.z };
-                            for (int d = 0; d < 3; ++d) {
-                                lo[d] = std::min(lo[d], e[d]);
-                                hi[d] = std::max(hi[d], e[d]);
-                            }
-                        }
-                for (int d = 0; d < 3; ++d) {
-                    rep.pieceBox[id * 6 + d * 2]     = lo[d];
-                    rep.pieceBox[id * 6 + d * 2 + 1] = hi[d];
-                }
-            }
-
     // --- the DBG question: can ANY proper subset come out? ------------------
     const bool full = rep.pieces <= opt.fullSubsetsUpTo && rep.pieces <= 24;
     rep.subsetSearchFull = full;
@@ -715,6 +621,150 @@ DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
     std::sort(fd.begin(), fd.end());
     if (!fd.isEmpty())
         rep.medianFreeDirs = fd[fd.size() / 2];
+
+}
+
+}  // namespace
+
+DbgReport DbgAnalysis::run(const Trivariate &tv, const DbgOptions &opt)
+{
+    DbgReport rep;
+    if (!tv.isValid()) {
+        rep.error = QStringLiteral("trivariate is not valid");
+        return rep;
+    }
+
+    double dom[6];
+    tv.domain(dom);
+    for (int a = 0; a < 3; ++a)
+        if (!(dom[a * 2 + 1] > dom[a * 2])) {
+            rep.error = QStringLiteral("degenerate domain on axis %1").arg(a);
+            return rep;
+        }
+
+    const int n[3] = { std::max(1, opt.cells[0]),
+                       std::max(1, opt.cells[1]),
+                       std::max(1, opt.cells[2]) };
+    rep.pieces = n[0] * n[1] * n[2];
+
+    double h[3];
+    for (int a = 0; a < 3; ++a)
+        h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
+
+    const auto cut = [&](int axis, int i) {
+        const double lo = dom[axis * 2], hi = dom[axis * 2 + 1];
+        return lo + (hi - lo) * double(i) / double(n[axis]);
+    };
+    const auto pieceAt = [&](int i, int j, int k) {
+        return (i * n[1] + j) * n[2] + k;
+    };
+
+    measureJacobian(tv, opt, rep);
+
+    // --- interfaces ---------------------------------------------------------
+    //
+    // Only interior cuts are shared between two pieces; the outer boundary of
+    // the domain maps to the model's own surface.
+    const int fs = std::max(2, opt.faceSamples);
+    std::vector<RawInterface> interfaces;
+
+    for (int axis = 0; axis < 3; ++axis) {
+        const int u = (axis + 1) % 3, v = (axis + 2) % 3;
+
+        for (int c = 1; c < n[axis]; ++c) {
+            const double plane = cut(axis, c);
+
+            for (int iu = 0; iu < n[u]; ++iu)
+                for (int iv = 0; iv < n[v]; ++iv) {
+                    int loIdx[3], hiIdx[3];
+                    loIdx[axis] = c - 1;  hiIdx[axis] = c;
+                    loIdx[u] = hiIdx[u] = iu;
+                    loIdx[v] = hiIdx[v] = iv;
+
+                    DbgPair pr;
+                    pr.axis = axis;
+                    pr.a = pieceAt(loIdx[0], loIdx[1], loIdx[2]);
+                    pr.b = pieceAt(hiIdx[0], hiIdx[1], hiIdx[2]);
+
+                    const double u0 = cut(u, iu), u1 = cut(u, iu + 1);
+                    const double v0 = cut(v, iv), v1 = cut(v, iv + 1);
+
+                    // Raw cross products first: their length is the local area
+                    // element, needed to tell a real normal from noise.
+                    std::vector<V3> raw;
+                    raw.reserve(fs * fs);
+                    for (int su = 0; su < fs; ++su)
+                        for (int sv = 0; sv < fs; ++sv) {
+                            double p[3];
+                            p[axis] = plane;
+                            p[u] = u0 + (u1 - u0) * su / double(fs - 1);
+                            p[v] = v0 + (v1 - v0) * sv / double(fs - 1);
+
+                            // n parallel to M_u x M_v for the two in-plane
+                            // axes. With det J > 0 that points along increasing
+                            // `axis`, i.e. outward from the low-side piece, and
+                            // equals J^-T applied to the domain normal without
+                            // inverting J.
+                            raw.push_back(cross(tangent(tv, p, u, dom, h[u]),
+                                                tangent(tv, p, v, dom, h[v])));
+                        }
+
+                    // Where the map degenerates - the poles of a surface of
+                    // revolution, where one tangent vanishes - the cross product
+                    // is round-off, and normalising it yields a direction that is
+                    // pure noise. Those samples cover no area, so they carry no
+                    // contact; drop them rather than let them block directions.
+                    double maxArea = 0.0;
+                    for (const V3 &c : raw) maxArea = std::max(maxArea, len(c));
+                    std::vector<V3> norms;
+                    norms.reserve(raw.size());
+                    for (const V3 &c : raw)
+                        if (len(c) > 1e-4 * maxArea)
+                            norms.push_back(unit(c));
+
+                    if (norms.empty())
+                        continue;
+                    RawInterface ri;
+                    ri.pair = pr;
+                    ri.norms = std::move(norms);
+                    interfaces.push_back(std::move(ri));
+                }
+        }
+    }
+
+    finishBlocking(rep, opt, interfaces);
+
+    // Each piece's extent in R^3, sampled over its own cell of the domain.
+    // This is what lets the analysis be checked against the deformed tiles the
+    // IRIT script writes: the analyser never reads those files, so matching
+    // boxes are the evidence that it is dividing the same puzzle.
+    rep.pieceBox.resize(rep.pieces * 6);
+    for (int i = 0; i < n[0]; ++i)
+        for (int j = 0; j < n[1]; ++j)
+            for (int k = 0; k < n[2]; ++k) {
+                const int id = pieceAt(i, j, k);
+                double lo[3] = {  1e300,  1e300,  1e300 };
+                double hi[3] = { -1e300, -1e300, -1e300 };
+                const int S = 7;
+                for (int a = 0; a <= S; ++a)
+                    for (int b = 0; b <= S; ++b)
+                        for (int c = 0; c <= S; ++c) {
+                            double p[3];
+                            p[0] = cut(0, i) + (cut(0, i + 1) - cut(0, i)) * a / S;
+                            p[1] = cut(1, j) + (cut(1, j + 1) - cut(1, j)) * b / S;
+                            p[2] = cut(2, k) + (cut(2, k + 1) - cut(2, k)) * c / S;
+                            const V3 q = evalAt(tv, p);
+                            const double e[3] = { q.x, q.y, q.z };
+                            for (int d = 0; d < 3; ++d) {
+                                lo[d] = std::min(lo[d], e[d]);
+                                hi[d] = std::max(hi[d], e[d]);
+                            }
+                        }
+                for (int d = 0; d < 3; ++d) {
+                    rep.pieceBox[id * 6 + d * 2]     = lo[d];
+                    rep.pieceBox[id * 6 + d * 2 + 1] = hi[d];
+                }
+            }
 
     rep.valid = true;
     return rep;
@@ -919,13 +969,62 @@ double modelScale(const Trivariate &tv, const double dom[6])
 
 }  // namespace
 
+namespace {
+
+// Slide the given start points (parameter space) along d and report where they
+// land. `classify` says which piece a parameter point is in, and whether it is
+// clearly inside it rather than on a cut. No normals are involved.
+DbgSweep slidePoints(const Trivariate &tv, const std::vector<std::array<double, 3>> &starts,
+                     const std::vector<char> &moving,
+                     const std::function<int(const double *, bool *)> &classify,
+                     const double dirIn[3], double travel, int steps)
+{
+    DbgSweep s;
+    double dom[6];
+    tv.domain(dom);
+    double h[3];
+    for (int a = 0; a < 3; ++a)
+        h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
+    const V3 d = unit(V3 { dirIn[0], dirIn[1], dirIn[2] });
+    const double tolOk = 1e-6 * modelScale(tv, dom);   // residual that counts as solved
+
+    for (const auto &st0 : starts) {
+        double p[3] = { st0[0], st0[1], st0[2] };
+        const V3 x0 = evalAt(tv, p);
+        ++s.samples;
+
+        for (int st = 1; st <= steps; ++st) {
+            const double t = travel * double(st) / double(steps);
+            const V3 y { x0.x + t * d.x, x0.y + t * d.y, x0.z + t * d.z };
+
+            // Newton, continued from the previous step's solution.
+            const double res = invertNear(tv, dom, h, y, p, tolOk);
+            if (res >= tolOk * 100.0) {
+                // No preimage inside the domain: the point has left the model
+                // (or Newton failed). Stop tracking.
+                ++s.lost;
+                break;
+            }
+            bool clear = false;
+            const int cell = classify(p, &clear);
+            if (cell >= 0 && cell < int(moving.size()) && !moving[cell] && clear) {
+                ++s.collided;
+                if (s.firstHit < 0.0 || t < s.firstHit) s.firstHit = t;
+                break;
+            }
+        }
+    }
+    return s;
+}
+
+}  // namespace
+
 DbgSweep DbgAnalysis::sweep(const Trivariate &tv, const DbgOptions &opt,
                             const QVector<int> &group, const double dirIn[3],
                             double travel, int steps, int perAxis)
 {
-    DbgSweep s;
     if (!tv.isValid() || group.isEmpty())
-        return s;
+        return DbgSweep();
 
     double dom[6];
     tv.domain(dom);
@@ -934,22 +1033,14 @@ DbgSweep DbgAnalysis::sweep(const Trivariate &tv, const DbgOptions &opt,
                        std::max(1, opt.cells[2]) };
     const int pieces = n[0] * n[1] * n[2];
 
-    double h[3];
-    for (int a = 0; a < 3; ++a)
-        h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
-
     std::vector<char> moving(pieces, 0);
     for (int g : group)
         if (g >= 0 && g < pieces) moving[g] = 1;
 
-    const V3 d = unit(V3 { dirIn[0], dirIn[1], dirIn[2] });
-
-    const double tolOk = 1e-6 * modelScale(tv, dom);   // residual that counts as solved
-
     // Which cell a parameter point lies in, and whether it is clearly inside it
     // rather than sitting on a cut (where the answer is ambiguous).
     const double margin = 1e-3;
-    const auto cellOf = [&](const double p[3], bool *clearlyInside) {
+    const auto cellOf = [&](const double *p, bool *clearlyInside) {
         int idx[3];
         *clearlyInside = true;
         for (int a = 0; a < 3; ++a) {
@@ -967,18 +1058,18 @@ DbgSweep DbgAnalysis::sweep(const Trivariate &tv, const DbgOptions &opt,
         return (idx[0] * n[1] + idx[1]) * n[2] + idx[2];
     };
 
+    // Samples reach close to the cell's faces - that is where a blocked move
+    // shows up first.
+    std::vector<std::array<double, 3>> starts;
     const int per = std::max(2, perAxis);
     for (int g : group) {
         if (g < 0 || g >= pieces) continue;
         const int ci[3] = { g / (n[1] * n[2]), (g / n[2]) % n[1], g % n[2] };
-
         for (int a = 0; a < per; ++a)
             for (int b = 0; b < per; ++b)
                 for (int c = 0; c < per; ++c) {
-                    // Samples reach close to the cell's faces - that is where a
-                    // blocked move shows up first.
                     const int ab[3] = { a, b, c };
-                    double p[3];
+                    std::array<double, 3> p;
                     for (int k = 0; k < 3; ++k) {
                         const double lo = dom[k * 2], hi = dom[k * 2 + 1];
                         const double c0 = lo + (hi - lo) * double(ci[k]) / n[k];
@@ -986,36 +1077,10 @@ DbgSweep DbgAnalysis::sweep(const Trivariate &tv, const DbgOptions &opt,
                         const double f = 0.01 + 0.98 * double(ab[k]) / double(per - 1);
                         p[k] = c0 + (c1 - c0) * f;
                     }
-                    const V3 x0 = evalAt(tv, p);
-                    ++s.samples;
-
-                    bool done = false;
-                    for (int st = 1; st <= steps && !done; ++st) {
-                        const double t = travel * double(st) / double(steps);
-                        const V3 y { x0.x + t * d.x, x0.y + t * d.y, x0.z + t * d.z };
-
-                        // Newton, continued from the previous step's solution.
-                        const double res = invertNear(tv, dom, h, y, p, tolOk);
-
-                        if (res >= tolOk * 100.0) {
-                            // No preimage inside the domain: the point has
-                            // left the model (or Newton failed). Stop tracking.
-                            ++s.lost;
-                            done = true;
-                            break;
-                        }
-
-                        bool clear = false;
-                        const int cell = cellOf(p, &clear);
-                        if (cell >= 0 && !moving[cell] && clear) {
-                            ++s.collided;
-                            if (s.firstHit < 0.0 || t < s.firstHit) s.firstHit = t;
-                            done = true;
-                        }
-                    }
+                    starts.push_back(p);
                 }
     }
-    return s;
+    return slidePoints(tv, starts, moving, cellOf, dirIn, travel, steps);
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,4 +1285,248 @@ DbgQuality DbgAnalysis::quality(const Trivariate &tv, const DbgOptions &opt,
         q.volCv = (q.volMean > 0.0) ? std::sqrt(var) / q.volMean : 0.0;
     }
     return q;
+}
+
+// ---------------------------------------------------------------------------
+// Curved BSP in D
+// ---------------------------------------------------------------------------
+DbgReport DbgAnalysis::runBsp(const Trivariate &tv, const CurvedBsp &bsp, const DbgOptions &opt)
+{
+    DbgReport rep;
+    if (!tv.isValid() || !bsp.isValid()) {
+        rep.error = QStringLiteral("no trivariate, or no division");
+        return rep;
+    }
+    double dom[6];
+    tv.domain(dom);
+    double h[3];
+    for (int a = 0; a < 3; ++a)
+        h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
+    rep.pieces = bsp.pieceCount();
+
+    measureJacobian(tv, opt, rep);
+
+    // --- interfaces: sample every curved split -----------------------------
+    //
+    // A split is the surface p_a = at + A f(p_b, p_c) over its cell. Each sample
+    // is nudged a hair to either side; the two pieces found there are the pair
+    // this part of the split separates (one split can border many pairs). The
+    // normal in R^3 is J^-T grad g, written with cofactors so J is never
+    // inverted:  n' ~ g_u (M_v x M_w) + g_v (M_w x M_u) + g_w (M_u x M_v).
+    std::map<std::pair<int, int>, std::vector<V3>> raw;
+    std::map<std::pair<int, int>, int> axisOf;
+    const int S = std::max(5, 3 * opt.faceSamples);
+    for (int si = 0; si < bsp.splitCount(); ++si) {
+        const int node = bsp.splitNode(si);
+        const CurvedBsp::Split &sp = bsp.split(node);
+        const int a = sp.axis, bb = (a + 1) % 3, cc = (a + 2) % 3;
+        const double *bulge = bsp.faceBulge(node);
+        // The cell may bulge past its box where earlier splits bent outward.
+        const double b0 = std::max(dom[2 * bb], sp.lo[bb] - bulge[2 * bb]);
+        const double b1 = std::min(dom[2 * bb + 1], sp.hi[bb] + bulge[2 * bb + 1]);
+        const double c0 = std::max(dom[2 * cc], sp.lo[cc] - bulge[2 * cc]);
+        const double c1 = std::min(dom[2 * cc + 1], sp.hi[cc] + bulge[2 * cc + 1]);
+        const double eps = 1e-5 * (dom[2 * a + 1] - dom[2 * a]);
+
+        for (int ib = 0; ib < S; ++ib)
+            for (int ic = 0; ic < S; ++ic) {
+                double p[3];
+                p[bb] = b0 + (b1 - b0) * (ib + 0.5) / S;
+                p[cc] = c0 + (c1 - c0) * (ic + 0.5) / S;
+                p[a] = bsp.pointOnSplit(node, p[bb], p[cc]);
+                if (p[a] <= dom[2 * a] || p[a] >= dom[2 * a + 1])
+                    continue;
+                double gr[3];
+                bsp.gradG(node, p, gr);
+                const double gl = std::sqrt(gr[0] * gr[0] + gr[1] * gr[1] + gr[2] * gr[2]);
+                double lo[3], hi[3];
+                for (int k = 0; k < 3; ++k) {
+                    lo[k] = p[k] - eps * gr[k] / gl;
+                    hi[k] = p[k] + eps * gr[k] / gl;
+                }
+                const int pl = bsp.classify(lo), ph = bsp.classify(hi);
+                if (pl < 0 || ph < 0 || pl == ph)
+                    continue;
+                // Both sides must be this split's own children, or the sample
+                // lies outside the cell the split belongs to.
+                const int nl = bsp.child(node, 0), nh = bsp.child(node, 1);
+                if (!bsp.isInSubtree(bsp.pieceNode(pl), nl) || !bsp.isInSubtree(bsp.pieceNode(ph), nh))
+                    continue;
+
+                const V3 Mu = tangent(tv, p, 0, dom, h[0]);
+                const V3 Mv = tangent(tv, p, 1, dom, h[1]);
+                const V3 Mw = tangent(tv, p, 2, dom, h[2]);
+                const V3 cu = cross(Mv, Mw), cv = cross(Mw, Mu), cw = cross(Mu, Mv);
+                const V3 nn { gr[0] * cu.x + gr[1] * cv.x + gr[2] * cw.x,
+                              gr[0] * cu.y + gr[1] * cv.y + gr[2] * cw.y,
+                              gr[0] * cu.z + gr[1] * cv.z + gr[2] * cw.z };
+                raw[{ pl, ph }].push_back(nn);
+                axisOf[{ pl, ph }] = a;
+            }
+    }
+
+    std::vector<RawInterface> interfaces;
+    for (auto &kv : raw) {
+        double maxArea = 0.0;
+        for (const V3 &c : kv.second) maxArea = std::max(maxArea, len(c));
+        RawInterface ri;
+        ri.pair.a = kv.first.first;
+        ri.pair.b = kv.first.second;
+        ri.pair.axis = axisOf[kv.first];
+        for (const V3 &c : kv.second)
+            if (len(c) > 1e-4 * maxArea)
+                ri.norms.push_back(unit(c));
+        if (!ri.norms.empty())
+            interfaces.push_back(std::move(ri));
+    }
+
+    finishBlocking(rep, opt, interfaces);
+
+    // Piece extents in R^3, from a grid of D classified into pieces.
+    rep.pieceBox.assign(rep.pieces * 6, 0.0);
+    for (int i = 0; i < rep.pieces; ++i)
+        for (int k = 0; k < 3; ++k) {
+            rep.pieceBox[i * 6 + 2 * k] = 1e300;
+            rep.pieceBox[i * 6 + 2 * k + 1] = -1e300;
+        }
+    const int G = 24;
+    for (int i = 0; i < G; ++i)
+        for (int j = 0; j < G; ++j)
+            for (int k = 0; k < G; ++k) {
+                const double p[3] = { dom[0] + (dom[1] - dom[0]) * (i + 0.5) / G,
+                                      dom[2] + (dom[3] - dom[2]) * (j + 0.5) / G,
+                                      dom[4] + (dom[5] - dom[4]) * (k + 0.5) / G };
+                const int pc = bsp.classify(p);
+                if (pc < 0) continue;
+                const V3 q = evalAt(tv, p);
+                const double e[3] = { q.x, q.y, q.z };
+                for (int d = 0; d < 3; ++d) {
+                    rep.pieceBox[pc * 6 + 2 * d] = std::min(rep.pieceBox[pc * 6 + 2 * d], e[d]);
+                    rep.pieceBox[pc * 6 + 2 * d + 1] = std::max(rep.pieceBox[pc * 6 + 2 * d + 1], e[d]);
+                }
+            }
+
+    rep.valid = true;
+    return rep;
+}
+
+DbgQuality DbgAnalysis::qualityBsp(const Trivariate &tv, const CurvedBsp &bsp)
+{
+    DbgQuality q;
+    if (!tv.isValid() || !bsp.isValid())
+        return q;
+    double dom[6];
+    tv.domain(dom);
+    double h[3];
+    for (int a = 0; a < 3; ++a)
+        h[a] = (dom[a * 2 + 1] - dom[a * 2]) * 1e-5;
+    q.modelSize = modelScale(tv, dom);
+    q.pieces.resize(bsp.pieceCount());
+    std::vector<char> seen(bsp.pieceCount(), 0);
+
+    // Volume = integral of det J over the piece's region of D (midpoint rule on
+    // a grid classified into pieces); the fold check on the same samples.
+    const int G = 28;
+    const double cellVol = (dom[1] - dom[0]) * (dom[3] - dom[2]) * (dom[5] - dom[4]) / (G * G * G);
+    for (int i = 0; i < G; ++i)
+        for (int j = 0; j < G; ++j)
+            for (int k = 0; k < G; ++k) {
+                const double p[3] = { dom[0] + (dom[1] - dom[0]) * (i + 0.5) / G,
+                                      dom[2] + (dom[3] - dom[2]) * (j + 0.5) / G,
+                                      dom[4] + (dom[5] - dom[4]) * (k + 0.5) / G };
+                const int pc = bsp.classify(p);
+                if (pc < 0) continue;
+                const double det = dot(tangent(tv, p, 0, dom, h[0]),
+                                       cross(tangent(tv, p, 1, dom, h[1]), tangent(tv, p, 2, dom, h[2])));
+                DbgPieceQuality &pq = q.pieces[pc];
+                pq.volume += std::fabs(det) * cellVol;
+                if (!seen[pc] || det < pq.minDetJ) { pq.minDetJ = det; seen[pc] = 1; }
+            }
+    // Thickness is not measured for curved pieces yet (the ray test walks the
+    // cell's box faces); -1 = not measured.
+    if (!q.pieces.isEmpty()) {
+        double sum = 0.0;
+        q.volMin = q.volMax = q.pieces[0].volume;
+        for (const DbgPieceQuality &pq : q.pieces) {
+            sum += pq.volume;
+            q.volMin = std::min(q.volMin, pq.volume);
+            q.volMax = std::max(q.volMax, pq.volume);
+        }
+        q.volMean = sum / q.pieces.size();
+        double var = 0.0;
+        for (const DbgPieceQuality &pq : q.pieces)
+            var += (pq.volume - q.volMean) * (pq.volume - q.volMean);
+        q.volCv = q.volMean > 0.0 ? std::sqrt(var / q.pieces.size()) / q.volMean : 0.0;
+    }
+    return q;
+}
+
+DbgSweep DbgAnalysis::sweepBsp(const Trivariate &tv, const CurvedBsp &bsp,
+                               const QVector<int> &group, const double dir[3],
+                               double travel, int steps, int perAxis)
+{
+    if (!tv.isValid() || !bsp.isValid() || group.isEmpty())
+        return DbgSweep();
+    double dom[6];
+    tv.domain(dom);
+    std::vector<char> moving(bsp.pieceCount(), 0);
+    for (int g : group)
+        if (g >= 0 && g < bsp.pieceCount()) moving[g] = 1;
+
+    // Start points: a grid over D, kept where it falls inside a moving piece.
+    std::vector<std::array<double, 3>> starts;
+    const int G = std::max(8, 2 * perAxis);
+    for (int i = 0; i < G; ++i)
+        for (int j = 0; j < G; ++j)
+            for (int k = 0; k < G; ++k) {
+                const std::array<double, 3> p { dom[0] + (dom[1] - dom[0]) * (i + 0.5) / G,
+                                                dom[2] + (dom[3] - dom[2]) * (j + 0.5) / G,
+                                                dom[4] + (dom[5] - dom[4]) * (k + 0.5) / G };
+                const int pc = bsp.classify(p.data());
+                if (pc >= 0 && moving[pc]) starts.push_back(p);
+            }
+    const double clearMargin = 1e-3 * std::min({ dom[1] - dom[0], dom[3] - dom[2], dom[5] - dom[4] });
+    const auto cls = [&](const double *p, bool *clearly) {
+        double m = 0.0;
+        const int pc = bsp.classify(p, &m);
+        *clearly = m > clearMargin;
+        return pc;
+    };
+    return slidePoints(tv, starts, moving, cls, dir, travel, steps);
+}
+
+// How far M is from the trilinear blend of its 8 corners, as a fraction of the
+// model's size. A box cage (the old bounding-cage trivariate) gives 0: every
+// cut in D then stays flat in R^3 and cannot interlock by curvature.
+double DbgAnalysis::affineDeviation(const Trivariate &tv)
+{
+    if (!tv.isValid())
+        return 0.0;
+    double dom[6];
+    tv.domain(dom);
+    V3 c[8];
+    for (int k = 0; k < 8; ++k) {
+        const double p[3] = { dom[(k & 1) ? 1 : 0], dom[(k & 2) ? 3 : 2], dom[(k & 4) ? 5 : 4] };
+        c[k] = evalAt(tv, p);
+    }
+    const double size = modelScale(tv, dom);
+    double worst = 0.0;
+    const int G = 8;
+    for (int i = 0; i <= G; ++i)
+        for (int j = 0; j <= G; ++j)
+            for (int k = 0; k <= G; ++k) {
+                const double t[3] = { double(i) / G, double(j) / G, double(k) / G };
+                const double p[3] = { dom[0] + (dom[1] - dom[0]) * t[0],
+                                      dom[2] + (dom[3] - dom[2]) * t[1],
+                                      dom[4] + (dom[5] - dom[4]) * t[2] };
+                V3 lin { 0, 0, 0 };
+                for (int q = 0; q < 8; ++q) {
+                    const double w = ((q & 1) ? t[0] : 1 - t[0]) * ((q & 2) ? t[1] : 1 - t[1]) *
+                                     ((q & 4) ? t[2] : 1 - t[2]);
+                    lin.x += w * c[q].x; lin.y += w * c[q].y; lin.z += w * c[q].z;
+                }
+                const V3 m = evalAt(tv, p);
+                worst = std::max(worst, len(V3 { m.x - lin.x, m.y - lin.y, m.z - lin.z }));
+            }
+    return worst / size;
 }

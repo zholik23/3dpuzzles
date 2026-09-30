@@ -17,6 +17,7 @@
 // The DBG and the criteria run on a worker thread, so the window stays live.
 // While one runs, nothing else in the analyser touches IRIT.
 //
+#include "CurvedBsp.h"
 #include "DbgAnalysis.h"
 #include "PuzzleDivider.h"
 #include "Trivariate.h"
@@ -36,6 +37,10 @@ class PuzzleAnalyzer : public QObject {
     Q_PROPERTY(QStringList siblings  READ siblings  NOTIFY fileChanged)
     Q_PROPERTY(bool        busy      READ busy      NOTIFY busyChanged)
     Q_PROPERTY(QString     status    READ status    NOTIFY statusChanged)
+    // What M is: how far it bends away from a box. A box cage (the old
+    // pipeline) cannot curve any cut in D.
+    Q_PROPERTY(QString     trivariateText READ trivariateText NOTIFY fileChanged)
+    Q_PROPERTY(bool        trivariateFlat READ trivariateFlat NOTIFY fileChanged)
     Q_PROPERTY(bool        hasResult READ hasResult NOTIFY resultChanged)
     // false = too many pieces to test every group: the answers are not a proof
     Q_PROPERTY(bool        searchFull READ searchFull NOTIFY resultChanged)
@@ -67,6 +72,10 @@ public:
     // Divide into nu x nv x nw cells and analyse.
     Q_INVOKABLE void run(int nu, int nv, int nw, int directions);
 
+    // A BSP of the parameter domain D whose splits are curved (CurvedBsp):
+    // `bend` 0 = flat splits, up to 0.9 = as curved as each cell allows.
+    Q_INVOKABLE void runBsp(int pieces, double bend, int waves, int seed, int directions);
+
     // Slide the selected opening along +d and -d, and each member alone.
     Q_INVOKABLE void verifySelected();
 
@@ -75,6 +84,8 @@ public:
     QStringList siblings()  const { return m_siblings; }
     bool        busy()      const { return m_busy; }
     QString     status()    const { return m_status; }
+    QString     trivariateText() const { return m_trivText; }
+    bool        trivariateFlat() const { return m_trivFlat; }
     bool        hasResult() const { return m_hasResult; }
     bool        searchFull() const { return m_hasResult && m_res.dbg.subsetSearchFull; }
 
@@ -113,6 +124,9 @@ private:
     struct Result {
         DbgReport  dbg;
         DbgQuality quality;
+        bool       bsp = false;
+        CurvedBsp  division;              // bsp only
+        QVector<MeshData> meshes;         // bsp only: one per piece
     };
 
     void setStatus(const QString &s);
@@ -137,6 +151,11 @@ private:
     bool                 m_hasResult = false;
     bool                 m_busy = false;
     QString              m_status;
+    QString              m_trivText;
+    bool                 m_trivFlat = false;
+    bool                 m_bspMode = false;
+    CurvedBsp            m_bsp;
+    QString              m_divisionLabel;
 
     QVariantList m_criteria, m_openingRows, m_stepRows, m_pairRows, m_pieceRows;
     QString      m_mapText, m_keyText, m_sweepText;

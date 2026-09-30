@@ -15,6 +15,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 class Trivariate {
 public:
@@ -34,12 +35,18 @@ public:
 
     static Trivariate adopt(void *tv, const QString &label);
 
+    // A deep copy (the IRIT trivariate is copied).
+    Trivariate clone() const;
+
     bool    isValid() const { return m_tv != nullptr; }
     QString label()   const { return m_label; }
 
     void domain(double d[6]) const;
 
     void orders(int o[3]) const;
+
+    // Control points per direction (0 if invalid).
+    void lengths(int l[3]) const;
 
     bool tessellate(MeshData *out, double fineNess, QString *error) const;
 
@@ -49,6 +56,10 @@ public:
     bool saveToFile(const QString& path, QString* error) const;
 
     Trivariate subRegion(double u0, double u1, double v0, double v1, double w0, double w1) const;
+
+    // Writes several trivariates into one .itd file as named objects.
+    static bool saveAll(const QVector<const Trivariate *> &tvs, const QStringList &names,
+                        const QString &path, QString *error);
 private:
     void   *m_tv = nullptr;
     QString m_label;

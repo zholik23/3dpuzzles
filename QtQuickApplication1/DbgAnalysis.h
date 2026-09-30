@@ -181,9 +181,24 @@ struct DbgSweep {
     double firstHit = -1.0; // travel distance at the first collision; -1 = none
 };
 
+class CurvedBsp;
+
 namespace DbgAnalysis {
 
 DbgReport run(const Trivariate &tv, const DbgOptions &opt);
+
+// The same analysis for a BSP of curved splits in D (CurvedBsp): interfaces are
+// sampled on the curved splits, normals n' ~ J^-T grad g. Everything after the
+// interfaces is shared with run().
+DbgReport runBsp(const Trivariate &tv, const CurvedBsp &bsp, const DbgOptions &opt);
+DbgQuality qualityBsp(const Trivariate &tv, const CurvedBsp &bsp);
+
+// Max distance between M and the trilinear blend of its corners, as a fraction
+// of the model size. ~0 means M is (nearly) affine - a box cage - and cuts in D
+// stay flat in R^3.
+double affineDeviation(const Trivariate &tv);
+DbgSweep sweepBsp(const Trivariate &tv, const CurvedBsp &bsp, const QVector<int> &group,
+                  const double dir[3], double travel, int steps = 40, int perAxis = 8);
 
 // Move `group` (analyser piece ids) along `dir` up to distance `travel`.
 DbgSweep sweep(const Trivariate &tv, const DbgOptions &opt,

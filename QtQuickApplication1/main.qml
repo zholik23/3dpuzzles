@@ -199,6 +199,38 @@ ApplicationWindow {
                                   "Increment 3 trivariate fit."
                 }
                 Button {
+                    // Martin, Cohen & Kirby 2009: the mesh becomes a real
+                    // trivariate B-spline (V-rep), so Random cuts its domain D.
+                    text: app.fitting ? "Fitting…" : "Fit trivariate"
+                    enabled: app.hasMesh && !app.fitting
+                    onClicked: app.fitTrivariate(fitDetail.currentIndex)
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Harmonic volumetric parameterization of the loaded mesh " +
+                                  "(genus 0, one main tube). Saves tv_<model>.itd next to the " +
+                                  "model; Random then divides it in D and every piece is a " +
+                                  "sub-trivariate."
+                }
+                Button {
+                    // Morse split: cuts the limbs off at their joints so every
+                    // part is a tube a trivariate can fit.
+                    text: "Split limbs"
+                    enabled: app.hasMesh && !app.fitting
+                    onClicked: app.splitLimbs()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Cuts legs, head, tail, ears off at their joints (harmonic Morse " +
+                                  "function, merge tree) and shows each part as a piece. The cuts are " +
+                                  "capped, so the parts meet exactly."
+                }
+                ComboBox {
+                    id: fitDetail
+                    width: 110
+                    model: [ "Normal", "Fine" ]
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Normal: 24×24 control points, fewest folds (none on bimba, 5 samples on spot). " +
+                                  "Fine: 48×64, about half the distance to the model, " +
+                                  "but more folded (det J < 0) spots."
+                }
+                Button {
                     text: "Back to model"
                     enabled: !app.dividesMesh
                     onClicked: app.showWholeModel()

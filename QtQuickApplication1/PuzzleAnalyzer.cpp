@@ -143,6 +143,20 @@ void PuzzleAnalyzer::openPath(const QString &path)
     emit resultChanged();
     emit sweepChanged();
     emit piecesChanged();
+    // Make sure the division will act on a real trivariate: a box cage would
+    // keep every cut in D flat in R^3.
+    const double dev = DbgAnalysis::affineDeviation(m_tv);
+    int ord[3];
+    m_tv.orders(ord);
+    m_trivFlat = dev < 0.005;
+    m_trivText = m_trivFlat
+        ? QStringLiteral("Trivariate B-spline, orders %1/%2/%3 - but M is (almost) affine: it deviates only "
+                         "%4% of the model size from a box. Cuts in D will stay flat in R^3.")
+              .arg(ord[0]).arg(ord[1]).arg(ord[2]).arg(100.0 * dev, 0, 'f', 2)
+        : QStringLiteral("Trivariate B-spline, orders %1/%2/%3. M bends up to %4% of the model size "
+                         "away from a box, so cuts in D are curved in R^3.")
+              .arg(ord[0]).arg(ord[1]).arg(ord[2]).arg(100.0 * dev, 0, 'f', 1);
+    emit fileChanged();
     setStatus(QStringLiteral("%1 loaded - choose a division and press Analyse").arg(m_fileName));
 }
 
@@ -157,6 +171,7 @@ void PuzzleAnalyzer::run(int nu, int nv, int nw, int directions)
         return;
     }
 
+    m_bspMode = false;
     m_opt = DbgOptions();
     m_opt.cells[0] = qBound(1, nu, 8);
     m_opt.cells[1] = qBound(1, nv, 8);
@@ -209,6 +224,7 @@ void PuzzleAnalyzer::run(int nu, int nv, int nw, int directions)
     emit sweepChanged();
     emit piecesChanged();
 
+    m_divisionLabel = QStringLiteral("%1x%2x%3 grid").arg(m_opt.cells[0]).arg(m_opt.cells[1]).arg(m_opt.cells[2]);
     setBusy(true);
     setStatus(QStringLiteral("Analysing %1 as %2x%3x%4 = %5 pieces ...")
                   .arg(m_fileName).arg(m_opt.cells[0]).arg(m_opt.cells[1])
@@ -233,6 +249,26 @@ void PuzzleAnalyzer::finishRun()
         return;
     }
     m_hasResult = true;
+    if (m_res.bsp) {
+        // The pieces were meshed in D and mapped through M on the worker.
+        m_bsp = m_res.division;
+        m_pieces = QVector<PuzzlePiece>(m_res.meshes.size());
+        for (int k = 0; k < 3; ++k) { m_lo[k] = 1e30f; m_hi[k] = -1e30f; }
+        for (int i = 0; i < m_res.meshes.size(); ++i) {
+            PuzzlePiece &pc = m_pieces[i];
+            pc.i = i;
+            pc.mesh = m_res.meshes[i];
+            for (int k = 0; k < 3; ++k) {
+                pc.centre[k] = 0.5f * (pc.mesh.bmin[k] + pc.mesh.bmax[k]);
+                pc.size[k] = pc.mesh.bmax[k] - pc.mesh.bmin[k];
+                if (!pc.mesh.isEmpty()) {
+                    m_lo[k] = std::min(m_lo[k], pc.mesh.bmin[k]);
+                    m_hi[k] = std::max(m_hi[k], pc.mesh.bmax[k]);
+                }
+            }
+        }
+        emit piecesChanged();
+    }
     buildTexts();
     buildCriteria();
 
@@ -240,8 +276,52 @@ void PuzzleAnalyzer::finishRun()
     m_selected = m_res.dbg.openings.isEmpty() ? -1 : 0;
     emit resultChanged();
     emit displayChanged();
-    setStatus(QStringLiteral("%1 - %2x%3x%4 analysed")
-                  .arg(m_fileName).arg(m_opt.cells[0]).arg(m_opt.cells[1]).arg(m_opt.cells[2]));
+    setStatus(QStringLiteral("%1 - %2 analysed").arg(m_fileName, m_divisionLabel));
+}
+
+void PuzzleAnalyzer::runBsp(int pieces, double bend, int waves, int seed, int directions)
+{
+    if (m_busy) return;
+    if (!m_tv.isValid()) {
+        setStatus(QStringLiteral("Open a trivariate first (a tvs_*.itd file)."));
+        return;
+    }
+    pieces = qBound(2, pieces, 12);            // 12: every group decided exactly
+    bend = qBound(0.0, bend, 0.9);
+    waves = qBound(1, waves, 4);
+
+    m_bspMode = true;
+    m_opt = DbgOptions();
+    m_opt.directions = qBound(500, directions, 20000);
+    m_divisionLabel = QStringLiteral("curved BSP, %1 pieces, bend %2, %3 wave(s), layout %4")
+                          .arg(pieces).arg(bend, 0, 'f', 2).arg(waves).arg(seed);
+
+    m_pieces.clear();
+    m_hasResult = false;
+    m_selected  = -1;
+    m_pull      = 0.0;
+    m_playhead  = 0.0;
+    m_sweepText.clear();
+    emit resultChanged();
+    emit sweepChanged();
+    emit piecesChanged();
+
+    setBusy(true);
+    setStatus(QStringLiteral("Cutting %1 in D (%2) ...").arg(m_fileName, m_divisionLabel));
+
+    const Trivariate *tv = &m_tv;
+    const DbgOptions opt = m_opt;
+    m_watcher.setFuture(QtConcurrent::run([tv, opt, pieces, bend, waves, seed]() {
+        Result r;
+        r.bsp = true;
+        r.division = CurvedBsp::build(*tv, pieces, bend, waves, quint32(seed));
+        r.dbg = DbgAnalysis::runBsp(*tv, r.division, opt);
+        r.quality = DbgAnalysis::qualityBsp(*tv, r.division);
+        r.meshes.resize(r.division.pieceCount());
+        for (int i = 0; i < r.division.pieceCount(); ++i)
+            r.division.meshPiece(*tv, i, 40, &r.meshes[i]);   // meshed in D, mapped through M
+        return r;
+    }));
 }
 
 int PuzzleAnalyzer::pieceId(const PuzzlePiece &p) const
@@ -410,7 +490,8 @@ void PuzzleAnalyzer::buildCriteria()
     // 4. Thickness.
     if (thinnest < 0)
         add(QStringLiteral("Minimum thickness"), QStringLiteral("na"),
-            QStringLiteral("No ray could be measured."));
+            m_bspMode ? QStringLiteral("Not measured yet for curved-BSP pieces.")
+                      : QStringLiteral("No ray could be measured."));
     else
         add(QStringLiteral("Minimum thickness"),
             thin.isEmpty() ? QStringLiteral("pass") : QStringLiteral("fail"),
@@ -431,9 +512,13 @@ void PuzzleAnalyzer::buildCriteria()
     add(QStringLiteral("One connected component per piece"),
         folded.isEmpty() ? QStringLiteral("pass") : QStringLiteral("fail"),
         folded.isEmpty()
-            ? QStringLiteral("Each piece is the image of one box under a continuous map, so it is "
-                             "one piece by construction, and det J > 0 in every piece, so none "
-                             "passes through itself.")
+            ? (m_bspMode
+                   ? QStringLiteral("Each piece is one connected region of D (a cell of the BSP, "
+                                    "its curved faces kept from crossing) under a continuous map, and "
+                                    "det J > 0 in every piece, so none passes through itself.")
+                   : QStringLiteral("Each piece is the image of one box under a continuous map, so it is "
+                                    "one piece by construction, and det J > 0 in every piece, so none "
+                                    "passes through itself."))
             : QStringLiteral("Pieces %1 fold (det J < 0): the piece passes through itself, so it "
                              "is not a valid solid.").arg(groupLabel(folded)));
 
@@ -473,6 +558,8 @@ void PuzzleAnalyzer::verifySelected()
     const double travel = 0.4 * m_res.quality.modelSize;
     const Trivariate *tv = &m_tv;
     const DbgOptions opt = m_opt;
+    const bool bsp = m_bspMode;
+    const CurvedBsp division = m_bsp;
 
     setBusy(true);
     setStatus(QStringLiteral("Sliding %1 for real ...").arg(groupLabel(g.pieces)));
@@ -485,11 +572,12 @@ void PuzzleAnalyzer::verifySelected()
         setStatus(QStringLiteral("Slide check done"));
         emit sweepChanged();
     });
-    w->setFuture(QtConcurrent::run([tv, opt, g, freeAlone, travel]() {
+    w->setFuture(QtConcurrent::run([tv, opt, g, freeAlone, travel, bsp, division]() {
         QStringList out;
         const auto line = [&](const QString &what, const QVector<int> &grp, const double d[3],
                               const QString &expect) {
-            const DbgSweep s = DbgAnalysis::sweep(*tv, opt, grp, d, travel);
+            const DbgSweep s = bsp ? DbgAnalysis::sweepBsp(*tv, division, grp, d, travel)
+                                   : DbgAnalysis::sweep(*tv, opt, grp, d, travel);
             const QString got = s.collided > 0 ? QStringLiteral("collides") : QStringLiteral("clear");
             const bool agree = (expect == QLatin1String("either")) || (expect == got);
             out << QStringLiteral("%1 %2 - DBG expects %3, sliding found %4 (%5 of %6 points hit%7)")

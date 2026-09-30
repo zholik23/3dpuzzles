@@ -6,6 +6,7 @@
 //
 #include "CageBoolean.h"
 #include "DivisionReport.h"
+#include "HarmonicFit.h"
 #include "CutWarp.h"
 #include "IritJoint.h"
 #include "MeshData.h"
@@ -14,11 +15,14 @@
 #include "PuzzleDivider.h"
 #include "Trivariate.h"
 
+#include <QFutureWatcher>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
 #include <QVector>
+
+#include <vector>
 
 class AppController : public QObject {
     Q_OBJECT
@@ -34,6 +38,7 @@ class AppController : public QObject {
     Q_PROPERTY(bool    hasTrivariate READ hasTrivariate NOTIFY trivariateChanged)
     Q_PROPERTY(QString trivariateName READ trivariateName NOTIFY trivariateChanged)
     Q_PROPERTY(QString trivariateInfo READ trivariateInfo NOTIFY trivariateChanged)
+    Q_PROPERTY(bool    fitting        READ fitting        NOTIFY fittingChanged)
 
     Q_PROPERTY(QString cutShapeInfo READ cutShapeInfo NOTIFY cutShapeChanged)
 
@@ -58,6 +63,26 @@ public:
     Q_INVOKABLE void useTrivariateFromFile();
     Q_INVOKABLE void usePrimitive(const QString &kind);
     Q_INVOKABLE void useBoundingCage();
+
+    // Fits a trivariate B-spline to the loaded mesh (harmonic volumetric
+    // parameterization, Martin, Cohen & Kirby 2009) on a worker thread, saves it
+    // as tv_<model>.itd next to the model and adopts it, so Random divides the
+    // model in its parameter domain D. detail 0 = normal (24 x 24 control
+    // points; tests: bimba det J > 0 everywhere, spot 5 folded samples), 1 = fine
+    // (48 x 64, about half the distance to the model, 12-21 folded samples).
+    Q_INVOKABLE void fitTrivariate(int detail = 0);
+
+    // Morse split of the loaded mesh into tube-like parts (body, legs, head,
+    // ...), shown as pieces. Step 1 of fitting a branching model: each part
+    // gets its own trivariate next.
+    Q_INVOKABLE void splitLimbs();
+
+    // Experimental: fit every part so its block encloses the part and trim
+    // pieces by it (Elber section 5). Off by default - see fitTrivariate.
+    void setEncloseTrim(bool on) { m_encloseTrim = on; }
+
+    // After Split limbs, Fit trivariate fits every part (its u = 0 face on its
+    // largest cap) and Random divides all the blocks.
     Q_INVOKABLE void showWholeModel();
 
     Q_INVOKABLE void savePieces(const QUrl &url, bool separateFiles, bool spread);
@@ -85,6 +110,7 @@ public:
     bool    hasTrivariate() const { return m_triv.isValid(); }
     QString trivariateName() const { return m_triv.label(); }
     QString trivariateInfo() const { return m_trivInfo; }
+    bool    fitting()        const { return m_fitting; }
 
     QString cutShapeInfo() const { return m_warp.describe(); }
     int     pieceCount()   const { return m_pieces.size(); }
@@ -108,6 +134,7 @@ signals:
     void piecesChanged();
     void cutShapeChanged();
     void jointsChanged();
+    void fittingChanged();
 
 private:
     void setError(const QString &msg);
@@ -118,6 +145,9 @@ private:
     void runCellDivision(const QVector<CellBox> &cells, const MeshData &work,
                          const QString &note);
     void runTrivCellDivision(const QVector<CellBox> &cells, const QString &note);
+    void runBspInD(int pieces);
+    void finishFit();
+    void finishPartsFit(const QVector<HarmonicFit::Result> &all);
     void describePieces(const QString &note, int gridCells, const QString &warning);
     void applyJoints();
     void cutCellDovetails();
@@ -153,6 +183,38 @@ private:
     int     m_figureVersion = 0;
     bool    m_hasError = false;
 
+    // True when m_triv came from a file (a real B-spline trivariate such as
+    // Elber's tvs_*.itd), false for the bounding cage or a primitive. Only a
+    // real trivariate gets the BSP in D: on the box cage every cut in D would
+    // stay flat in R^3.
+    bool    m_trivReal = false;
+
+    // The harmonic fit, running on a worker thread; m_fitPath is the model it
+    // was started for, so a result that arrives after another load is dropped.
+    QFutureWatcher<QVector<HarmonicFit::Result>> m_fitWatcher;
+    bool    m_fitting = false;
+    QString m_fitPath;
+
+    // The BSP-in-D cells behind m_pieces when they are exact sub-trivariates of
+    // m_triv (V-rep pieces); saving to .itd then also writes them as
+    // trivariates. Cleared by anything that replaces the pieces another way.
+    QVector<CellBox> m_vrepCells;
+    QVector<int>     m_vrepBlockOf;     // per cell: which of m_blocks it is in (empty: m_triv)
+    QVector<int>     m_vrepPieceOf;     // per cell: the piece it belongs to (a glued piece has several)
+
+    // The limb split of the loaded mesh (Split limbs), and after Fit
+    // trivariate one trivariate per part: a multi-block V-rep. m_triv then
+    // holds a copy of the largest block, for everything that expects one.
+    QVector<HarmonicFit::Part> m_parts;
+    std::vector<Trivariate>    m_blocks;
+    QStringList                m_blockNames;
+    QVector<double>            m_blockVol;
+    QVector<int>               m_blockPart;     // block -> index into m_parts (its trimming surface)
+    QVector<HarmonicFit::Result> m_blockFits;   // block -> its control net (for cutting its part in D)
+    bool                       m_blocksEnclose = false;   // blocks enclose their parts: trim pieces by them
+    bool                       m_encloseTrim = false;
+    bool                       m_fitParts = false;
+
     JointParams m_joint;
     QString     m_jointNote;
     QString     m_cellJointNote;   // set when the CUT itself carried the joint
@@ -179,4 +241,10 @@ private:
 
     static constexpr double kModelFineNess = 20.0;
     static constexpr double kPieceFineNess = 12.0;
+
+    // Tessellation fineness for a trivariate: the fixed constants are enough
+    // for Elber's small control meshes, but a fitted trivariate (24 x 24 and
+    // more control points) drawn at 20 shows big flat facets - it looked less
+    // like the model than it is. Scales with the control mesh.
+    double fineNessFor(double base, double perControlPoint = 3.0) const;
 };
