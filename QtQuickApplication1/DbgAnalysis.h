@@ -193,6 +193,18 @@ DbgReport run(const Trivariate &tv, const DbgOptions &opt);
 DbgReport runBsp(const Trivariate &tv, const CurvedBsp &bsp, const DbgOptions &opt);
 DbgQuality qualityBsp(const Trivariate &tv, const CurvedBsp &bsp);
 
+// The same analysis from contact samples measured elsewhere - pieces cut in
+// the D of several trivariates (CutInD) and glued at the limb joints, where no
+// single M or cell grid describes the puzzle. Each contact: two pieces and the
+// normal there, pointing out of `a` into `b` (need not be unit). det J is not
+// measured here (minDetJ stays 0, jacobianOk false): the caller checks its own
+// trivariates.
+struct DbgContactSample {
+    int    a = -1, b = -1;
+    double n[3] = { 0, 0, 0 };
+};
+DbgReport runContacts(int pieces, const QVector<DbgContactSample> &contacts, const DbgOptions &opt);
+
 // Max distance between M and the trilinear blend of its corners, as a fraction
 // of the model size. ~0 means M is (nearly) affine - a box cage - and cuts in D
 // stay flat in R^3.

@@ -26,7 +26,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
@@ -84,7 +84,7 @@
     <Link>
       <AdditionalLibraryDirectories>C:\irit\irit\windowsVC2026\cagd_lib;C:\irit\irit\windowsVC2026\prsr_lib;C:\irit\irit\windowsVC2026\lib64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>IritPrsr64.lib;iritCagd64.lib;IritMisc64.lib;iritGeom64.lib;IritSymb64.lib;iritTrim64.lib;IritTriv64.lib;IritTrng64.lib;IritMdl64.lib;iritMvar64.lib;IritVMdl64.lib;iritExt64.lib;IritUser64.lib;iritBool64.lib;iritGrap64.lib;iritXtra64.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="Configuration">

@@ -63,6 +63,10 @@ public:
         // with its neighbour. The far pole is the vertex farthest from it.
         bool   capStart = false;
         double capCentre[3] = { 0, 0, 0 };
+        // Closed at both ends, like Elber's sphere: u runs pole to pole and the
+        // first and last rows collapse onto the poles - nothing is cut off, so
+        // the block holds the whole mesh (used for the enclosing trivariate).
+        bool   closedEnds = false;
         // > 0: the block is made to ENCLOSE its part, for Elber's section 5
         // trim - the outer row of the hex grid (on the surface) moves out along
         // the surface normal by inflate x the part's size, the cap row out past
@@ -122,6 +126,14 @@ public:
     // distance outside, of the part's size. 0 = the block encloses the mesh.
     static int outsideCount(const Result &r, const MeshData &mesh, double *worst = nullptr);
 
+    // The part thickened by `offset` (share of its size) and smoothed: its
+    // inside region on a voxel grid grown by the offset (which also fills dents
+    // narrower than twice the offset), the surface of that region by marching
+    // tetrahedra (watertight), then Taubin smoothing. It contains the part and
+    // has no thin fins or sharp creases - a trivariate fitted to it can
+    // enclose the part without folding. Plain C++.
+    static MeshData envelope(const MeshData &part, double offset, int voxels, QString *error);
+
     // After an enclosing fit: the few spots where vertices of the part still
     // stick out are pushed out locally, in rounds - each outer control point
     // by the largest need among the boundary samples it shapes (facing its
@@ -168,7 +180,45 @@ public:
         double neckCalm = 0.15;        // calm ring (grew less than this over the last 5% of the size)
         double bulbDrop = 0.12;        // a bulb (head): the ring is this much narrower than the widest one
         double tipRadius = 0.08;       // tips closer than this (geodesic, of the size) are one tip
+        // Search (simulated annealing) instead of the rules above: every tip
+        // gets a cut radius r (a geodesic ring round it) or none, and the
+        // combination with the lowest energy is kept. A cut costs
+        //     neck + 2 x planarity,
+        // neck = the ring's length / the longest ring within 8% of the size
+        // beyond it (small where the limb widens into what it hangs on),
+        // planarity = the ring's distance from its best plane / its radius;
+        // no cut costs `noCut`. Allowed: one loop, a tube (longer than wide),
+        // area within [minArea, maxArea], not holding the body's centre, and
+        // any two limbs apart or one inside the other (an ear on the head) -
+        // with a gap of one mesh edge, so each triangle meets one cut.
+        bool    search = true;
+        double  noCut = 1.5;   // above any fair cut: every real limb is cut, the search picks where
+        int     searchIters = 30000;       // per restart
+        int     searchRestarts = 4;
+        quint32 seed = 1;
+        // A cut ring thinner than this (its radius, of the size) is a stump too
+        // thin to hold a puzzle joint: its cut costs up to 2 more.
+        double  minStump = 0.015;
+        // The search keeps this many DIFFERENT splits (each chosen cut moved
+        // up, down or dropped, the rest re-optimised round it), best first;
+        // `pick` says which one splitLimbs builds (0 = the best). They are
+        // re-ranked by a fast trial fit (splitHealth).
+        int     shortlist = 3;
+        int     pick = 0;
     };
+    // How well a split's parts take a trivariate: a quick, coarse enclosing
+    // fit of every part (16 x 16 control points, coarse voxels) - folds
+    // (det J < 0), how far each part's envelope had to be thickened before the
+    // block held it (5%, 8%, 12.8%), and vertices still outside. Lower score is
+    // better: a fold outweighs everything, then failed parts, then thickening.
+    struct SplitHealth {
+        bool        ok = false;
+        double      score = 1e300;
+        int         failed = 0, folded = 0, folds = 0, retries = 0, outside = 0;
+        qint64      ms = 0;
+        QStringList lines;            // per part
+    };
+    static SplitHealth splitHealth(const QVector<Part> &parts);
     static bool splitLimbs(const MeshData &mesh, const SplitOptions &opt,
                            QVector<Part> *parts, QStringList *notes, QString *error);
 

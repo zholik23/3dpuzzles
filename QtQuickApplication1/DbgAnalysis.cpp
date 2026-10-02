@@ -1410,6 +1410,37 @@ DbgReport DbgAnalysis::runBsp(const Trivariate &tv, const CurvedBsp &bsp, const 
     return rep;
 }
 
+DbgReport DbgAnalysis::runContacts(int pieces, const QVector<DbgContactSample> &contacts, const DbgOptions &opt)
+{
+    DbgReport rep;
+    if (pieces < 2 || pieces > 31) {
+        rep.error = QStringLiteral("%1 pieces: the analysis takes 2 to 31").arg(pieces);
+        return rep;
+    }
+    rep.pieces = pieces;
+    // One interface per pair, a the lower index; normals turned to point out of a.
+    std::map<std::pair<int, int>, std::vector<V3>> raw;
+    for (const DbgContactSample &c : contacts) {
+        if (c.a < 0 || c.b < 0 || c.a >= pieces || c.b >= pieces || c.a == c.b) continue;
+        V3 n { c.n[0], c.n[1], c.n[2] };
+        if (!(len(n) > 0)) continue;
+        n = unit(n);
+        if (c.a < c.b) raw[{ c.a, c.b }].push_back(n);
+        else raw[{ c.b, c.a }].push_back(V3{ -n.x, -n.y, -n.z });
+    }
+    std::vector<RawInterface> interfaces;
+    for (auto &kv : raw) {
+        RawInterface ri;
+        ri.pair.a = kv.first.first;
+        ri.pair.b = kv.first.second;
+        ri.norms = std::move(kv.second);
+        interfaces.push_back(std::move(ri));
+    }
+    finishBlocking(rep, opt, interfaces);
+    rep.valid = true;
+    return rep;
+}
+
 DbgQuality DbgAnalysis::qualityBsp(const Trivariate &tv, const CurvedBsp &bsp)
 {
     DbgQuality q;

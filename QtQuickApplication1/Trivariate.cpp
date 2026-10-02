@@ -10,10 +10,18 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
+
 extern "C" {
-#include "inc_irit/triv_lib.h"
+#include "inc_irit/irit_sm.h"
+#include "inc_irit/misc_lib.h"
+#include "inc_irit/iritprsr.h"
 #include "inc_irit/cagd_lib.h"
+#include "inc_irit/trim_lib.h"
+#include "inc_irit/triv_lib.h"
+#include "inc_irit/mvar_lib.h"
 #include "inc_irit/allocate.h"
+#include "inc_irit/attribut.h"
 }
 
 Trivariate::~Trivariate()
@@ -412,6 +420,201 @@ bool Trivariate::saveAll(const QVector<const Trivariate *> &tvs, const QStringLi
         IRIT_PRSR_SET_OBJ_NAME2(obj, name.constData());
         IritPrsrPutObjectToHandler(handler, obj);
         IritPrsrFreeObject(obj);
+    }
+    IritPrsrCloseStream(handler, TRUE);
+    return true;
+}
+
+namespace {
+
+// A surface in D as an IRIT B-spline surface (E3: u, v, w).
+CagdSrfStruct *dSurfaceToSrf(const Trivariate::DSurface &d)
+{
+    if (d.n[0] < d.order[0] || d.n[1] < d.order[1] || d.knots[0].size() != d.n[0] + d.order[0] ||
+        d.knots[1].size() != d.n[1] + d.order[1] || d.ctrl.size() != 3 * d.n[0] * d.n[1])
+        return NULL;
+    CagdSrfStruct *s = IritCagdBspSrfNew(d.n[0], d.n[1], d.order[0], d.order[1], CAGD_PT_E3_TYPE);
+    if (s == NULL) return NULL;
+    for (int k = 0; k < d.knots[0].size(); ++k) s -> UKnotVector[k] = d.knots[0][k];
+    for (int k = 0; k < d.knots[1].size(); ++k) s -> VKnotVector[k] = d.knots[1][k];
+    for (int m = 0; m < d.n[0] * d.n[1]; ++m)
+        for (int a = 0; a < 3; ++a) s -> Points[a + 1][m] = d.ctrl[3 * m + a];
+    return s;
+}
+
+struct ComposeCtx {
+    const TrivTVStruct         *tv;
+    const Trivariate::DSurface *d;
+    IritPrsrObjectStruct       *dList;   // gets the surface(s) in D
+    IritPrsrObjectStruct       *mList;   // gets M composed with them
+};
+
+// Inside IritGuard (IRIT's composition can raise a fatal error).
+void doCompose(void *v)
+{
+    ComposeCtx *c = static_cast<ComposeCtx *>(v);
+    static const TrivTVDirType kDir[3] = { TRIV_CONST_U_DIR, TRIV_CONST_V_DIR, TRIV_CONST_W_DIR };
+    CagdSrfStruct *parts = dSurfaceToSrf(*c -> d);
+    if (parts == NULL) return;
+    // The closed v: split where v reaches 1 and bring the far part back by 1.
+    if (c -> d -> vWrapAt > 0.0) {
+        CagdRType s0, s1, t0, t1;
+        IritCagdSrfDomain(parts, &s0, &s1, &t0, &t1);
+        if (c -> d -> vWrapAt > s0 && c -> d -> vWrapAt < s1) {
+            CagdSrfStruct *two = IritCagdSrfSubdivAtParam(parts, c -> d -> vWrapAt, CAGD_CONST_U_DIR);
+            IritCagdSrfFree(parts);
+            parts = two;
+            if (parts != NULL && parts -> Pnext != NULL) {
+                CagdSrfStruct *far = parts -> Pnext;
+                for (int m = 0; m < far -> ULength * far -> VLength; ++m) far -> Points[2][m] -= 1.0;
+            }
+        }
+    }
+    CagdRType TD[6];
+    IritTrivTVDomain(c -> tv, &TD[0], &TD[1], &TD[2], &TD[3], &TD[4], &TD[5]);
+    for (CagdSrfStruct *s = parts; s != NULL; s = s -> Pnext) {
+        const int np = s -> ULength * s -> VLength;
+        double lo[3] = { 1e300, 1e300, 1e300 }, hi[3] = { -1e300, -1e300, -1e300 };
+        for (int m = 0; m < np; ++m)
+            for (int a = 0; a < 3; ++a) {
+                // Round-off at the domain's faces (the wrap, w = 0 / 1) snapped in.
+                CagdRType &x = s -> Points[a + 1][m];
+                if (x < TD[2 * a] && x > TD[2 * a] - 1e-7) x = TD[2 * a];
+                if (x > TD[2 * a + 1] && x < TD[2 * a + 1] + 1e-7) x = TD[2 * a + 1];
+                lo[a] = std::min(lo[a], double(x));
+                hi[a] = std::max(hi[a], double(x));
+            }
+        CagdSrfStruct *one = IritCagdSrfCopy(s);
+        one -> Pnext = NULL;
+        IritPrsrListObjectAppend(c -> dList, IritPrsrGenSRFObject(one));
+
+        const int iso = c -> d -> iso;
+        if (iso >= 0 && iso < 3) {
+            // On an iso-plane of D: M(S) is M's own iso-surface over the
+            // surface's range in the other two directions - exact, and plain.
+            CagdSrfStruct *is = IritTrivSrfFromTV(c -> tv, 0.5 * (lo[iso] + hi[iso]), kDir[iso], FALSE);
+            int k = 0;
+            for (int a = 0; a < 3 && is != NULL; ++a) {
+                if (a == iso) continue;
+                const double r0 = std::max(lo[a], double(TD[2 * a])), r1 = std::min(hi[a], double(TD[2 * a + 1]));
+                if (r1 > r0) {
+                    CagdSrfStruct *r = IritCagdSrfRegionFromSrf(is, r0, r1, k == 0 ? CAGD_CONST_U_DIR : CAGD_CONST_V_DIR);
+                    IritCagdSrfFree(is);
+                    is = r;
+                }
+                ++k;
+            }
+            if (is != NULL) IritPrsrListObjectAppend(c -> mList, IritPrsrGenSRFObject(is));
+            continue;
+        }
+        // Otherwise composed through the part of M it reaches (fewer knot lines
+        // to cross); IRIT splits it where it crosses M's knot lines.
+        double r0[3], r1[3];
+        for (int a = 0; a < 3; ++a) {
+            r0[a] = std::max(double(TD[2 * a]), lo[a] - 1e-6);
+            r1[a] = std::min(double(TD[2 * a + 1]), hi[a] + 1e-6);
+            if (r1[a] - r0[a] < 1e-4) {                 // flat in this direction: some room round it
+                const double m = 0.5 * (r0[a] + r1[a]);
+                r0[a] = std::max(double(TD[2 * a]), m - 1e-4);
+                r1[a] = std::min(double(TD[2 * a + 1]), m + 1e-4);
+            }
+        }
+        TrivTVStruct *sub = NULL;
+        const TrivTVStruct *cur = c -> tv;
+        for (int a = 0; a < 3; ++a) {
+            TrivTVStruct *next = IritTrivTVRegionFromTV(cur, r0[a], r1[a], kDir[a]);
+            if (sub != NULL) IritTrivTVFree(sub);
+            sub = next;
+            cur = next;
+            if (next == NULL) break;
+        }
+        if (sub == NULL) continue;
+        MvarMVStruct *mv = IritMvarCnvrtTVToMV(sub);
+        MvarMVStruct *smv = IritMvarCnvrtSrfToMV(s);
+        IritPrsrObjectStruct *res = (mv != NULL && smv != NULL) ? IritMvarMVCompose2(mv, smv, TRUE) : NULL;
+        if (res != NULL) IritPrsrListObjectAppend(c -> mList, res);
+        if (mv != NULL) IritMvarMVFree(mv);
+        if (smv != NULL) IritMvarMVFree(smv);
+        IritTrivTVFree(sub);
+    }
+    IritCagdSrfFreeList(parts);
+}
+
+}
+
+bool Trivariate::saveTrimmed(const QVector<TrimmedPiece> &pieces, const QVector<ExactCut> &cuts,
+                             const QString &path, QString *error, QStringList *notes)
+{
+    int handler = IritPrsrOpenDataFile(path.toUtf8().constData(), FALSE, FALSE);
+    if (handler < 0) {
+        if (error) *error = QStringLiteral("Could not open file for writing: %1").arg(path);
+        return false;
+    }
+    // The cuts, once each: in D, and composed through their part's M.
+    for (int k = 0; k < cuts.size(); ++k) {
+        const ExactCut &ec = cuts[k];
+        IritPrsrObjectStruct *list = IritPrsrGenLISTObject(NULL);
+        IritPrsrObjectStruct *dList = IritPrsrGenLISTObject(NULL);
+        IritPrsrObjectStruct *mList = IritPrsrGenLISTObject(NULL);
+        int failed = 0;
+        for (const DSurface &d : ec.surfaces) {
+            if (ec.block == nullptr || !ec.block -> isValid()) { ++failed; continue; }
+            ComposeCtx c;
+            c.tv = static_cast<const TrivTVStruct *>(ec.block -> raw());
+            c.d = &d;
+            c.dList = dList;
+            c.mList = mList;
+            if (!IritGuard::run(&c, doCompose)) ++failed;
+        }
+        if (failed && notes)
+            *notes << QStringLiteral("cut_%1 (%2): %3 of %4 surface(s) not composed through M (%5) - "
+                                     "its surface in D is written")
+                          .arg(k).arg(ec.name).arg(failed).arg(ec.surfaces.size()).arg(IritGuard::lastError());
+        IRIT_PRSR_SET_OBJ_NAME2(dList, "d");
+        IRIT_PRSR_SET_OBJ_NAME2(mList, "m");
+        IritPrsrListObjectAppend(list, dList);
+        IritPrsrListObjectAppend(list, mList);
+        const QByteArray what = ec.name.toUtf8();
+        IritMiscAttrSetObjectStrAttrib(list, "what", what.constData());
+        const QByteArray name = QStringLiteral("cut_%1").arg(k).toUtf8();
+        IRIT_PRSR_SET_OBJ_NAME2(list, name.constData());
+        IritPrsrPutObjectToHandler(handler, list);
+        IritPrsrFreeObject(list);
+    }
+    for (const TrimmedPiece &tp : pieces) {
+        IritPrsrObjectStruct *list = IritPrsrGenLISTObject(NULL);
+        for (const Trivariate *t : tp.cells) {
+            if (t == nullptr || !t->isValid()) continue;
+            IritPrsrObjectStruct *o = IritPrsrGenTRIVARObject(IritTrivTVCopy(static_cast<TrivTVStruct *>(t->raw())));
+            if (o != NULL) {
+                IRIT_PRSR_SET_OBJ_NAME2(o, "cell");
+                IritPrsrListObjectAppend(list, o);
+            }
+        }
+        IritPrsrObjectStruct *trim = IritPrsrGenLISTObject(NULL);
+        for (int q = 0; q + 8 < tp.trim.size(); q += 9) {
+            CagdSrfStruct *srf = IritCagdBzrSrfNew(2, 2, CAGD_PT_E3_TYPE);
+            if (srf == NULL) continue;
+            // (0,0) = p0, (1,0) = p1, (0,1) = p2, (1,1) = p2: the triangle p0 p1 p2.
+            const int idx[4] = { 0, 3, 6, 6 };
+            for (int m = 0; m < 4; ++m)
+                for (int a = 0; a < 3; ++a) srf->Points[a + 1][m] = tp.trim[q + idx[m] + a];
+            IritPrsrObjectStruct *o = IritPrsrGenSRFObject(srf);
+            if (o != NULL) IritPrsrListObjectAppend(trim, o);
+        }
+        IRIT_PRSR_SET_OBJ_NAME2(trim, "trim");
+        IritPrsrListObjectAppend(list, trim);
+        if (!tp.cuts.isEmpty()) {
+            QStringList refs;
+            for (const auto &cr : tp.cuts)
+                refs << QStringLiteral("%1:%2").arg(cr.first).arg(cr.second > 0 ? QStringLiteral("+1") : QStringLiteral("-1"));
+            const QByteArray a = refs.join(QLatin1Char(' ')).toUtf8();
+            IritMiscAttrSetObjectStrAttrib(list, "cuts", a.constData());
+        }
+        const QByteArray name = tp.name.toUtf8();
+        IRIT_PRSR_SET_OBJ_NAME2(list, name.constData());
+        IritPrsrPutObjectToHandler(handler, list);
+        IritPrsrFreeObject(list);
     }
     IritPrsrCloseStream(handler, TRUE);
     return true;

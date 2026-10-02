@@ -5,10 +5,14 @@
 #include "HarmonicFit.h"
 #include "IritGuard.h"
 
+#include <QElapsedTimer>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <functional>
+#include <limits>
+#include <random>
 #include <unordered_map>
 #include <vector>
 
@@ -1012,11 +1016,12 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
     double maxPerim = 0.0;
     for (int c = 0; c < M; ++c) if (candOk[c]) maxPerim = std::max(maxPerim, candPerim[c]);
     int c0 = 0, c1 = M - 1;
-    if (opt.capStart)
+    const bool toPoles = opt.capStart || opt.closedEnds;
+    if (toPoles)
         while (c0 < M && !candOk[c0]) ++c0;                   // the cap end is kept, not cut off
     else
         while (c0 < M && !(candOk[c0] && candPerim[c0] >= opt.capPerimeter * maxPerim)) ++c0;
-    if (opt.capStart)
+    if (toPoles)
         while (c1 >= 0 && !candOk[c1]) --c1;                  // the far end runs to the tip
     else
         while (c1 >= 0 && !(candOk[c1] && candPerim[c1] >= opt.capPerimeter * maxPerim)) --c1;
@@ -1167,7 +1172,7 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
 
     // A cap end: the skeleton starts at the cap's centre, u = 0, and ends at
     // the tip, u = 1.
-    if (opt.capStart) {
+    if (opt.capStart || opt.closedEnds) {
         skel.insert(skel.begin(), S.p[vMin]);
         skelU.insert(skelU.begin(), 0.0);
         skel.push_back(S.p[vMax]);
@@ -1220,10 +1225,17 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
         level[0] = 1e-6;                                      // the cap's ring itself
         level[nu - 1] = 1.0;
         collapsed[nu - 1] = 1;
+    } else if (opt.closedEnds) {
+        level[0] = 0.0;
+        level[nu - 1] = 1.0;
+        collapsed[0] = collapsed[nu - 1] = 1;
     }
+    // The pole a collapsed row sits on.
+    auto poleOf = [&](int i) { return (opt.closedEnds && !opt.capStart && i < nu / 2) ? S.p[vMin] : S.p[vMax]; };
     R.notes << QStringLiteral("u levels %1 .. %2 (%3)")
                    .arg(level.front(), 0, 'f', 3).arg(level.back(), 0, 'f', 3)
-                   .arg(opt.capStart ? QStringLiteral("cap ring to tip") : QStringLiteral("caps around the poles left out"));
+                   .arg(opt.capStart ? QStringLiteral("cap ring to tip")
+                                     : opt.closedEnds ? QStringLiteral("pole to pole") : QStringLiteral("caps around the poles left out"));
     if (R.branchLevels > 0)
         R.notes << QStringLiteral("%1 of %2 scanned levels have more than one loop: the model branches, "
                                   "only the main tube is fitted").arg(R.branchLevels).arg(c1 - c0 + 1);
@@ -1234,14 +1246,15 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
     {
         for (int i = 0; i < nu; ++i) {
             if (collapsed[i]) {
-                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = S.p[vMax];
+                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = poleOf(i);
                 continue;
             }
             const std::vector<Loop> loops = levelLoops(S, u, level[i]);
             const int bi = mainLoop(loops, sv, levelC[i], levelP[i]);
-            if (bi < 0 && opt.capStart && i > nu / 2) {       // a tiny loop next to the tip: collapse it too
+            const bool nearPole = (opt.capStart && i > nu / 2) || (opt.closedEnds && (i <= 2 || i >= nu - 3));
+            if (bi < 0 && nearPole) {                          // a tiny loop next to a pole: collapse it too
                 collapsed[i] = 1;
-                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = S.p[vMax];
+                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = poleOf(i);
                 continue;
             }
             if (bi < 0) {
@@ -1270,9 +1283,9 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
                 V.swap(V2);
                 total = -total;
             }
-            if (std::fabs(total - 1.0) > 0.25 && opt.capStart && i > nu / 2) {
+            if (std::fabs(total - 1.0) > 0.25 && nearPole) {
                 collapsed[i] = 1;
-                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = S.p[vMax];
+                for (int j = 0; j < nv; ++j) X[size_t(i) + size_t(nu) * j] = poleOf(i);
                 continue;
             }
             if (std::fabs(total - 1.0) > 0.25) {
@@ -1317,7 +1330,7 @@ HarmonicFit::Result HarmonicFit::fit(const MeshData &mesh, const Options &optIn)
     std::vector<V3> P(size_t(nu) * nv * nw);
     auto at = [&](int i, int j, int k) -> V3 & { return P[size_t(i) + size_t(nu) * (size_t(j) + size_t(nv) * k)]; };
     for (int i = 0; i < nu; ++i) {
-        const V3 target = collapsed[i] ? S.p[vMax] : skelAt(level[i]);
+        const V3 target = collapsed[i] ? poleOf(i) : skelAt(level[i]);
         for (int j = 0; j < nv; ++j) {
             const V3 x0 = X[size_t(i) + size_t(nu) * j];
             if (collapsed[i]) {                               // the tip: every layer on it
@@ -2093,6 +2106,740 @@ std::vector<double> ringLengths(const Surf &S, const std::vector<double> &d, dou
 
 }  // namespace
 
+namespace {
+
+// A level set of a distance field at r = k * step: its length, how many loops
+// it has (counting loops of at least 5% of the length) and how far it is from
+// flat (distance from its best plane / its radius).
+struct RingStat {
+    double P = 0.0, plan = 1e9;
+    int    comps = 0;
+    V3     cen = { 0, 0, 0 };   // the ring's centre (length-weighted)
+};
+
+// Smallest eigenvalue of a symmetric 3x3 matrix (Jacobi sweeps).
+double minEig3(double a[3][3])
+{
+    for (int sweep = 0; sweep < 40; ++sweep) {
+        if (std::fabs(a[0][1]) + std::fabs(a[0][2]) + std::fabs(a[1][2]) < 1e-24) break;
+        for (int p = 0; p < 2; ++p)
+            for (int q = p + 1; q < 3; ++q) {
+                if (std::fabs(a[p][q]) < 1e-300) continue;
+                const double theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                const double t = (theta >= 0 ? 1.0 : -1.0) / (std::fabs(theta) + std::sqrt(theta * theta + 1.0));
+                const double c = 1.0 / std::sqrt(t * t + 1.0), sn = t * c;
+                for (int k = 0; k < 3; ++k) {
+                    const double akp = a[k][p], akq = a[k][q];
+                    a[k][p] = c * akp - sn * akq;
+                    a[k][q] = sn * akp + c * akq;
+                }
+                for (int k = 0; k < 3; ++k) {
+                    const double apk = a[p][k], aqk = a[q][k];
+                    a[p][k] = c * apk - sn * aqk;
+                    a[q][k] = sn * apk + c * aqk;
+                }
+            }
+    }
+    return std::min({ a[0][0], a[1][1], a[2][2] });
+}
+
+std::vector<RingStat> ringStats(const Surf &S, const std::vector<double> &d, double step, int levels)
+{
+    struct Seg { long long ea, eb; V3 a, b; };
+    std::vector<std::vector<Seg>> segs(levels);
+    for (const auto &t : S.t) {
+        const double da = d[t[0]], db = d[t[1]], dc = d[t[2]];
+        if (da > 1e299 || db > 1e299 || dc > 1e299) continue;
+        const double dmin = std::min({ da, db, dc }), dmax = std::max({ da, db, dc });
+        for (int k = std::max(1, int(std::ceil(dmin / step))); k <= std::min(levels - 1, int(std::floor(dmax / step))); ++k) {
+            const double r = k * step;
+            V3 q[2];
+            long long e[2];
+            int nq = 0;
+            for (int m = 0; m < 3 && nq < 2; ++m) {
+                const int x = t[m], y = t[(m + 1) % 3];
+                const double fx = d[x] - r, fy = d[y] - r;
+                if ((fx < 0) != (fy < 0)) { e[nq] = edgeKey(x, y); q[nq++] = add(S.p[x], mul(sub(S.p[y], S.p[x]), fx / (fx - fy))); }
+            }
+            if (nq == 2) segs[k].push_back({ e[0], e[1], q[0], q[1] });
+        }
+    }
+    std::vector<RingStat> out(levels);
+    for (int k = 0; k < levels; ++k) {
+        const auto &sg = segs[k];
+        if (sg.empty()) continue;
+        std::unordered_map<long long, int> id;
+        std::vector<int> par;
+        auto get = [&](long long e) {
+            auto it = id.find(e);
+            if (it != id.end()) return it->second;
+            const int x = int(par.size());
+            par.push_back(x);
+            id.emplace(e, x);
+            return x;
+        };
+        auto find = [&](int x) { while (par[x] != x) x = par[x] = par[par[x]]; return x; };
+        double P = 0.0, W = 0.0;
+        V3 c = { 0, 0, 0 };
+        for (const Seg &g : sg) {
+            const int a = find(get(g.ea)), b = find(get(g.eb));
+            if (a != b) par[a] = b;
+            const double l = len(sub(g.b, g.a));
+            P += l;
+            c = add(c, mul(add(g.a, g.b), 0.5 * l));
+            W += l;
+        }
+        if (!(W > 0)) continue;
+        c = mul(c, 1.0 / W);
+        std::unordered_map<int, double> compLen;
+        double C[3][3] = { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } };
+        for (const Seg &g : sg) {
+            const double l = len(sub(g.b, g.a));
+            compLen[find(get(g.ea))] += l;
+            const V3 m = sub(mul(add(g.a, g.b), 0.5), c);
+            for (int x = 0; x < 3; ++x)
+                for (int y = 0; y < 3; ++y) C[x][y] += l * m[x] * m[y] / W;
+        }
+        RingStat rs;
+        rs.P = P;
+        rs.cen = c;
+        // Loops under 15% of the ring are bumps (a teat, a knuckle), not a second branch.
+        for (const auto &kv : compLen) if (kv.second >= 0.15 * P) ++rs.comps;
+        const double rad = P / (2.0 * 3.14159265358979323846);
+        rs.plan = rad > 0 ? std::sqrt(std::max(0.0, minEig3(C))) / rad : 1e9;
+        out[k] = rs;
+    }
+    return out;
+}
+
+// One chosen cut: the ring d < r round a tip.
+struct SplitChoice {
+    int tip = -1;
+    double r = 0.0, area = 0.0, neck = 0.0, plan = 0.0;
+    std::vector<double> d;
+    std::vector<double> field;   // > 0 inside the limb (its distance from the cut plane), -1e300 far away
+};
+
+// The shortlist: (energy, cuts) of up to opt.shortlist different splits, best first.
+using SplitList = std::vector<std::pair<double, std::vector<SplitChoice>>>;
+
+SplitList searchSplit(const Surf &S, const Nbr &nbr, const std::vector<double> &area, double totalArea,
+                                     double size, int root, const std::vector<double> &g, const std::vector<int> &tips,
+                                     const HarmonicFit::SplitOptions &opt, QStringList *notes)
+{
+    const int n = int(S.p.size()), T = int(tips.size());
+    const double step = 0.005 * size;
+    const int K = int(opt.maxLength * size / step) + 1;
+    const int w = std::max(3, int(std::lround(0.08 * size / step)));
+    const int levels = K + w + 2;
+    const double kPi = 3.14159265358979323846;
+    const bool debug = qEnvironmentVariableIsSet("SPLIT_DEBUG");
+    double gap = 0.0;                                  // the longest mesh edge
+    for (const auto &t : S.t)
+        for (int m = 0; m < 3; ++m) gap = std::max(gap, len(sub(S.p[t[m]], S.p[t[(m + 1) % 3]])));
+    const int k0 = std::max(2, int(std::ceil(opt.minPersistence * size / step)));
+
+    // A candidate limb: a group of tips and the rings of its (multi-source)
+    // distance field. A head is its muzzle, ears and horns together - a ring
+    // grown from one tip of it is too wide to be a tube near the muzzle and
+    // falls apart round the ears further on.
+    struct Cand {
+        std::vector<int> members;              // indices into tips
+        std::vector<double> d;
+        std::vector<double> unary, A, neck, plan;
+        std::vector<int> order;
+        std::vector<int> valid;                // radii (k) allowed
+        int kTop = 0;                          // the largest allowed
+        int joint = -1;                        // where the limb opens into the body (-1: none found)
+        int firstJoint = -1;                   // its first joint (a knee before the hip): its own length
+        double firstArea = 0.0;                // the area inside it
+        bool planar = true;                    // cuts are planes across the axis (else rings round the tip)
+        std::vector<V3> cs, tg;                // per level: the axis point and direction (away from the tip)
+        std::vector<int> enter;                // per vertex: the first level whose cut holds it
+    };
+    const int NEVER = 1 << 29;
+    int gapL = 1;                              // the gap between two limbs, in levels
+    std::vector<Cand> C;
+    auto evaluate = [&](Cand &c) {
+        std::vector<int> src;
+        for (int m : c.members) src.push_back(tips[m]);
+        c.d = geodesic(S, nbr, src, (levels + 1) * step);
+        const std::vector<RingStat> R = ringStats(S, c.d, step, levels);
+        c.unary.assign(levels, HUGE_VAL);
+        c.A.assign(levels, 0.0);
+        c.neck.assign(levels, 0.0);
+        c.plan.assign(levels, 0.0);
+        if (!c.planar) {
+        // Rings round the tip: the region at level k is {d < k step}.
+        c.enter.assign(size_t(n), NEVER);
+        for (int v = 0; v < n; ++v) if (c.d[size_t(v)] < 1e299) c.enter[size_t(v)] = int(c.d[size_t(v)] / step) + 1;
+        c.order.clear();
+        for (int v = 0; v < n; ++v) if (c.enter[size_t(v)] < NEVER) c.order.push_back(v);
+        std::sort(c.order.begin(), c.order.end(), [&](int x, int y) { return c.d[size_t(x)] < c.d[size_t(y)]; });
+        {
+            double cum = 0.0;
+            size_t q = 0;
+            for (int k = 0; k < levels; ++k) {
+                while (q < c.order.size() && c.d[size_t(c.order[q])] < k * step) cum += area[size_t(c.order[q++])];
+                c.A[size_t(k)] = cum;
+            }
+        }
+        const int ws = std::max(2, int(std::lround(0.02 * size / step)));
+        auto growth = [&](int k) { return (R[k + ws].P - R[k].P) / (ws * step) / (2.0 * kPi); };
+        int calm = -1, joint = -1;
+        bool armed = false;
+        for (int k = 1; k + ws < levels && k <= K; ++k) {
+            if (!armed) {
+                if (R[k].P > 0 && R[k].comps == 1 && growth(k) <= 0.4) { armed = true; if (calm < 0) calm = k; }
+            } else if (growth(k) >= 0.6) {
+                if (c.firstJoint < 0 || c.A[size_t(k)] <= 3.0 * c.firstArea) {
+                    joint = k;
+                    if (c.firstJoint < 0) { c.firstJoint = k; c.firstArea = c.A[size_t(k)]; }
+                }
+                armed = false;
+            }
+        }
+        if (calm >= 0 && joint < 0) {
+            double gmax = 0.4;
+            for (int k = calm + 1; k + ws < levels && k <= K; ++k)
+                if (growth(k) > gmax) { gmax = growth(k); joint = k; }
+        }
+        c.joint = joint;
+        int broken = levels;
+        {
+            bool one = false;
+            for (int k = 1; k < levels; ++k) {
+                if (!(R[k].P > 0)) continue;
+                if (R[k].comps == 1) one = true;
+                else if (one) { broken = k; break; }
+            }
+        }
+        for (int k = k0; k <= K; ++k) {
+            const RingStat &rs = R[k];
+            const double r = k * step;
+            if (joint < 0 || k > joint || k >= broken) continue;
+            if (rs.comps != 1 || !(rs.P > 0)) continue;
+            if (c.A[size_t(k)] < opt.minArea * totalArea || c.A[size_t(k)] > opt.maxArea * totalArea) continue;
+            if (c.members.size() > 1 && c.A[size_t(k)] < 0.05 * totalArea) continue;
+            if (!(c.d[size_t(root)] > r + gap)) continue;
+            if (r < 1.2 * rs.P / (2.0 * kPi)) continue;
+            double beyond = 0.0;
+            for (int j = k + 1; j <= k + w && j < levels; ++j) beyond = std::max(beyond, R[j].P);
+            if (!(beyond > 0)) continue;
+            c.neck[size_t(k)] = rs.P / beyond;
+            c.plan[size_t(k)] = rs.plan;
+            c.unary[size_t(k)] = c.neck[size_t(k)] + 2.0 * rs.plan;
+            {
+                const double rad = rs.P / (2.0 * kPi), tmin = opt.minStump * size;
+                if (rad < tmin) c.unary[size_t(k)] += 2.0 * (1.0 - rad / tmin);
+            }
+            c.valid.push_back(k);
+        }
+        } else {
+        // The limb's axis: the centres of its rings, smoothed; its direction
+        // runs away from the tip. Cuts are PLANES across that axis - the
+        // limb's true cross-sections. (Rings at equal distance over the
+        // surface slanted on a bent hoof, grew at every knee and hock, and
+        // touched the other leg before going round a hip.)
+        std::vector<V3> cs(size_t(levels), V3{ 0, 0, 0 }), tg(size_t(levels), V3{ 0, 0, 0 });
+        std::vector<char> hasAx(size_t(levels), 0);
+        for (int k = 1; k < levels; ++k) {
+            V3 sum = { 0, 0, 0 };
+            int cnt = 0;
+            for (int j = std::max(1, k - 2); j <= std::min(levels - 1, k + 2); ++j)
+                if (R[j].P > 0) { sum = add(sum, R[j].cen); ++cnt; }
+            if (cnt) { cs[size_t(k)] = mul(sum, 1.0 / cnt); hasAx[size_t(k)] = 1; }
+        }
+        for (int k = 1; k < levels; ++k) {
+            if (!hasAx[size_t(k)]) continue;
+            int lo = k, hi = k;
+            for (int j = k - 1; j >= std::max(1, k - 3); --j) if (hasAx[size_t(j)]) lo = j;
+            for (int j = k + 1; j <= std::min(levels - 1, k + 3); ++j) if (hasAx[size_t(j)]) hi = j;
+            const V3 dd = sub(cs[size_t(hi)], cs[size_t(lo)]);
+            if (len(dd) > 0) tg[size_t(k)] = mul(dd, 1.0 / len(dd)); else hasAx[size_t(k)] = 0;
+        }
+        c.cs = cs;
+        c.tg = tg;
+        // Each plane: the limb region = what is reachable from the tip on the
+        // tip's side of it; clean = its outline is ONE loop (the plane cuts
+        // round the limb only, not also into the body or the other leg).
+        c.enter.assign(size_t(n), NEVER);
+        std::vector<double> Pp(size_t(levels), 0.0), regionArea(size_t(levels), 0.0);
+        std::vector<char> clean(size_t(levels), 0);
+        std::vector<int> stamp(size_t(n), -1), tstamp(S.t.size(), -1), region;
+        bool seenClean = false;
+        int stopAt = levels;
+        for (int k = 1; k < levels && k <= stopAt; ++k) {
+            if (!hasAx[size_t(k)]) continue;
+            const V3 pc = cs[size_t(k)], pt = tg[size_t(k)];
+            auto sd = [&](int v) { return dot(sub(S.p[v], pc), pt); };
+            region.clear();
+            for (int s0 : src)
+                if (sd(s0) < 0 && stamp[size_t(s0)] != k) { stamp[size_t(s0)] = k; region.push_back(s0); }
+            for (size_t h = 0; h < region.size(); ++h)
+                for (const auto &nw : nbr[size_t(region[h])]) {
+                    const int u2 = nw.first;
+                    if (stamp[size_t(u2)] != k && sd(u2) < 0) { stamp[size_t(u2)] = k; region.push_back(u2); }
+                }
+            if (region.empty() || stamp[size_t(root)] == k) { if (seenClean) break; continue; }
+            double ra = 0.0;
+            for (int v : region) ra += area[size_t(v)];
+            regionArea[size_t(k)] = ra;
+            if (ra > opt.maxArea * totalArea) break;               // spread over the body
+            // The outline: segments of the triangles across the plane.
+            std::unordered_map<long long, int> id;
+            std::vector<int> par;
+            auto get = [&](long long e) {
+                auto it = id.find(e);
+                if (it != id.end()) return it->second;
+                const int x = int(par.size());
+                par.push_back(x);
+                id.emplace(e, x);
+                return x;
+            };
+            auto findp = [&](int x) { while (par[size_t(x)] != x) x = par[size_t(x)] = par[size_t(par[size_t(x)])]; return x; };
+            double P = 0.0;
+            for (int v : region)
+                for (int ti : S.vtris[size_t(v)]) {
+                    if (tstamp[size_t(ti)] == k) continue;
+                    tstamp[size_t(ti)] = k;
+                    const auto &t = S.t[size_t(ti)];
+                    V3 q[2];
+                    long long e[2];
+                    int nq = 0;
+                    for (int m = 0; m < 3 && nq < 2; ++m) {
+                        const int x = t[size_t(m)], y = t[size_t((m + 1) % 3)];
+                        const bool ix = stamp[size_t(x)] == k, iy = stamp[size_t(y)] == k;
+                        if (ix == iy) continue;
+                        const double fx = sd(x), fy = sd(y);
+                        const double tt = std::clamp(fx / (fx - fy), 0.0, 1.0);
+                        e[nq] = edgeKey(x, y);
+                        q[nq++] = add(S.p[x], mul(sub(S.p[y], S.p[x]), tt));
+                    }
+                    if (nq != 2) continue;
+                    const int pa = findp(get(e[0])), pb = findp(get(e[1]));
+                    if (pa != pb) par[size_t(pa)] = pb;
+                    P += len(sub(q[1], q[0]));
+                }
+            int loops = 0;
+            for (size_t x = 0; x < par.size(); ++x) if (findp(int(x)) == int(x)) ++loops;
+            for (int v : region) if (c.enter[size_t(v)] == NEVER) c.enter[size_t(v)] = k;
+            if (loops == 1) { clean[size_t(k)] = 1; Pp[size_t(k)] = P; seenClean = true; }
+            else if (seenClean && stopAt == levels) stopAt = std::min(levels - 1, k + w);   // keep a few for the neck test
+        }
+
+        // The limb's joint, on its cross-sections: past the tip's cap they grow
+        // slowly along the limb (calm), then fast where the limb opens into
+        // what it hangs on. A knee or hock is a joint too; the limb may reach
+        // up to the last one while it stays limb-sized, and the reward below
+        // pulls it there.
+        const int ws = std::max(2, int(std::lround(0.02 * size / step)));
+        auto growth = [&](int k) {
+            if (!clean[size_t(k)] || k + ws >= levels || !clean[size_t(k + ws)]) return 1e9;   // the section broke: as fast as it gets
+            return (Pp[size_t(k + ws)] - Pp[size_t(k)]) / (ws * step) / (2.0 * kPi);
+        };
+        int calm = -1, joint = -1;
+        bool armed = false;
+        for (int k = 1; k + ws < levels && k <= K; ++k) {
+            if (!armed) {
+                if (clean[size_t(k)] && growth(k) <= 0.4) { armed = true; if (calm < 0) calm = k; }
+            } else if (growth(k) >= 0.6) {
+                if (c.firstJoint < 0 || regionArea[size_t(k)] <= 3.0 * c.firstArea) {
+                    joint = k;
+                    if (c.firstJoint < 0) { c.firstJoint = k; c.firstArea = regionArea[size_t(k)]; }
+                }
+                armed = false;
+            }
+        }
+        if (calm >= 0 && joint < 0) {
+            double gmax = 0.4;
+            for (int k = calm + 1; k + ws < levels && k <= K; ++k)
+                if (clean[size_t(k)] && growth(k) < 1e8 && growth(k) > gmax) { gmax = growth(k); joint = k; }
+        }
+        c.joint = joint;
+        // A tube: once the sections are clean, they stay clean up to the cut.
+        int broken = levels;
+        {
+            bool one = false;
+            for (int k = 1; k < levels; ++k) {
+                if (!hasAx[size_t(k)]) continue;
+                if (clean[size_t(k)]) one = true;
+                else if (one) { broken = k; break; }
+            }
+        }
+        // The limb's own width: the median cross-section along its calm stretch.
+        double Pref = 1e300;
+        {
+            std::vector<double> calmP;
+            const int kEnd = c.firstJoint > 0 ? c.firstJoint : joint;
+            for (int k = std::max(1, calm); calm >= 0 && k <= kEnd && k < levels; ++k) if (clean[size_t(k)]) calmP.push_back(Pp[size_t(k)]);
+            if (!calmP.empty()) { std::nth_element(calmP.begin(), calmP.begin() + long(calmP.size() / 2), calmP.end()); Pref = calmP[calmP.size() / 2]; }
+        }
+        c.A = regionArea;
+        c.order.clear();
+        for (int v = 0; v < n; ++v) if (c.enter[size_t(v)] < NEVER) c.order.push_back(v);
+        std::sort(c.order.begin(), c.order.end(), [&](int x, int y) { return c.enter[size_t(x)] < c.enter[size_t(y)]; });
+        QString dbg;
+        for (int k = k0; k <= K; ++k) {
+            const double r = k * step;
+            if (joint < 0 || k > joint) { dbg += QLatin1Char('J'); continue; }
+            if (k >= broken) { dbg += QLatin1Char('B'); continue; }
+            if (!clean[size_t(k)]) { dbg += QLatin1Char('C'); continue; }
+            if (c.A[size_t(k)] < opt.minArea * totalArea || c.A[size_t(k)] > opt.maxArea * totalArea) { dbg += QLatin1Char('A'); continue; }
+            // A group is a head (with its ears and horns), not a patch of one:
+            // at least 5% of the area.
+            if (c.members.size() > 1 && c.A[size_t(k)] < 0.05 * totalArea) { dbg += QLatin1Char('S'); continue; }
+            if (r < 1.2 * Pp[size_t(k)] / (2.0 * kPi)) { dbg += QLatin1Char('T'); continue; } // a bump, not a tube
+            // Not wider than the limb itself: a plane higher up stays one loop
+            // while it slices into the belly (a big flat face on the body).
+            if (Pp[size_t(k)] > 1.8 * Pref) { dbg += QLatin1Char('W'); continue; }
+            double beyond = 0.0;
+            for (int j = k + 1; j <= k + w && j < levels; ++j) beyond = std::max(beyond, Pp[size_t(j)]);
+            if (!(beyond > 0)) beyond = Pp[size_t(k)];
+            c.neck[size_t(k)] = Pp[size_t(k)] / beyond;
+            c.plan[size_t(k)] = 0.0;                                      // a plane is flat
+            c.unary[size_t(k)] = c.neck[size_t(k)];
+            {
+                const double rad = Pp[size_t(k)] / (2.0 * kPi), tmin = opt.minStump * size;
+                if (rad < tmin) c.unary[size_t(k)] += 2.0 * (1.0 - rad / tmin);    // too thin for a joint
+            }
+            c.valid.push_back(k);
+            dbg += QString::number(std::min(9, int(5.0 * c.unary[size_t(k)])));
+        }
+        }
+        // Reward for reaching up the limb: a leg that widens slowly into the
+        // body has the same neck all the way up, and was cut at the hoof.
+        if (!c.valid.empty()) {
+            c.kTop = c.valid.back();
+            // As strong as the neck term: along a leg the neck barely changes,
+            // and a leg should end at its joint.
+            for (int k : c.valid) c.unary[k] += 1.0 * (1.0 - double(k) / c.kTop);
+        }
+        if (notes && debug) {
+
+            QStringList m;
+            for (int t : c.members) m << QString::number(t);
+            QString vk;
+            for (int k : c.valid) vk += QString::number(k) + QLatin1Char(' ');
+            *notes << QStringLiteral("DBG group {%1} %2: valid levels %3").arg(m.join(QLatin1Char(',')))
+                          .arg(c.planar ? QStringLiteral("planes") : QStringLiteral("rings")).arg(vk);
+        }
+    };
+    for (int i = 0; i < T; ++i) {
+        Cand c;
+        c.members = { i };
+        c.planar = false;
+        evaluate(c);
+        C.push_back(std::move(c));
+    }
+    if (notes && debug)
+        for (int i = 0; i < T; ++i)
+            *notes << QStringLiteral("DBG tip %1 at (%2, %3, %4), joint at %5% of the size")
+                          .arg(i).arg(S.p[tips[i]][0], 0, 'f', 2).arg(S.p[tips[i]][1], 0, 'f', 2).arg(S.p[tips[i]][2], 0, 'f', 2)
+                          .arg(C[size_t(i)].joint < 0 ? -1.0 : 100.0 * C[size_t(i)].joint * step / size, 0, 'f', 1);
+    // Groups: single linkage on the tips' geodesic distances (a head: muzzle,
+    // ears, horns). Only tips that can be cut on their own join (a bump - an
+    // udder, a nose - is simply inside whatever region covers it), and at most
+    // one of them may be a big limb (3% of the area or more at its joint):
+    // two legs never make one part.
+    // Three kinds of tip: a limb (it can be cut on its own: a leg, an ear);
+    // a bulb far out from the body's centre (a muzzle: not a tube itself, it
+    // has to be covered by a group - the head); a bump near the centre (an
+    // udder), which is left alone.
+    std::vector<char> significant(T, 0);
+    std::vector<double> tipSize(T, 0.0);
+    double gFar = 0.0;
+    for (int t : tips) gFar = std::max(gFar, g[t]);
+    // The same tips with planar cuts: either kind may win a limb.
+    for (int i = 0; i < T; ++i) {
+        Cand c;
+        c.members = { i };
+        c.planar = true;
+        evaluate(c);
+        if (!c.valid.empty()) C.push_back(std::move(c));
+    }
+    for (int i = 0; i < T; ++i) {
+        bool planeOk = false;
+        for (size_t ci = size_t(T); ci < C.size(); ++ci) if (C[ci].members == std::vector<int>{ i }) planeOk = true;
+        const bool limb = !C[size_t(i)].valid.empty() || planeOk;
+        const bool bulb = !limb && g[tips[i]] >= 0.6 * gFar;
+        significant[i] = limb || bulb;
+        // How long its own limb is (tip to joint): a thin arm is still a big
+        // limb (by area it was small, and joined the head).
+        if (!C[size_t(i)].valid.empty())
+            tipSize[i] = (C[size_t(i)].firstJoint > 0 ? C[size_t(i)].firstJoint : C[size_t(i)].kTop) * step;
+        else if (limb) tipSize[i] = 0.10 * size;   // a limb only as planes: count it as long
+        if (notes && debug)
+            *notes << QStringLiteral("DBG tip %1: %2 (%3 of the farthest tip from the centre)").arg(i)
+                          .arg(limb ? QStringLiteral("limb") : bulb ? QStringLiteral("bulb") : QStringLiteral("bump"))
+                          .arg(g[tips[i]] / std::max(1e-30, gFar), 0, 'f', 2);
+    }
+    {
+        std::vector<std::vector<int>> groups;
+        std::vector<char> alive;
+        for (int i = 0; i < T; ++i) { groups.push_back({ i }); alive.push_back(significant[i]); }
+        auto bigCount = [&](const std::vector<int> &x, const std::vector<int> &y) {
+            int b = 0;
+            for (int i : x) b += tipSize[i] >= 0.10 * size;
+            for (int i : y) b += tipSize[i] >= 0.10 * size;
+            return b;
+        };
+        auto dist = [&](const std::vector<int> &x, const std::vector<int> &y) {
+            double best = 1e300;
+            for (int i : x) for (int j : y) best = std::min(best, C[size_t(i)].d[tips[j]]);
+            return best;
+        };
+        for (;;) {
+            int bx = -1, by = -1;
+            double bd = opt.maxLength * size;
+            for (size_t x = 0; x < groups.size(); ++x)
+                for (size_t y = x + 1; y < groups.size(); ++y) {
+                    // At most one big (long) limb: a head with its ears and
+                    // horns, never two legs, never an arm with the head. A
+                    // group must also be big itself (5% of the area, below).
+                    if (!alive[x] || !alive[y] || bigCount(groups[x], groups[y]) > 1) continue;
+                    const double dd = dist(groups[x], groups[y]);
+                    if (dd < bd) { bd = dd; bx = int(x); by = int(y); }
+                }
+            if (bx < 0) break;
+            std::vector<int> u = groups[size_t(bx)];
+            u.insert(u.end(), groups[size_t(by)].begin(), groups[size_t(by)].end());
+            std::sort(u.begin(), u.end());
+            alive[size_t(bx)] = alive[size_t(by)] = 0;
+            groups.push_back(u);
+            alive.push_back(1);
+            for (int kind = 0; kind < 2; ++kind) {
+                Cand c;
+                c.members = u;
+                c.planar = kind == 1;
+                evaluate(c);
+                if (!c.valid.empty()) C.push_back(std::move(c));
+            }
+        }
+    }
+    const int NC = int(C.size());
+
+    // Pairs: over the region inside candidate j's ring k, the nearest and
+    // farthest points from candidate i's sources.
+    std::vector<std::vector<std::vector<double>>> Mn(NC, std::vector<std::vector<double>>(NC, std::vector<double>(levels, 1e300)));
+    std::vector<std::vector<std::vector<double>>> Mx(NC, std::vector<std::vector<double>>(NC, std::vector<double>(levels, -1e300)));
+    // (by the level at which each vertex enters candidate i's cut)
+    gapL = std::max(1, int(std::ceil(gap / step)));
+    for (int j = 0; j < NC; ++j) {
+        std::vector<double> mn(NC, 1e300), mx(NC, -1e300);
+        size_t q = 0;
+        for (int k = 0; k < levels; ++k) {
+            while (q < C[j].order.size() && C[j].enter[size_t(C[j].order[q])] <= k) {
+                const int v = C[j].order[q++];
+                for (int i = 0; i < NC; ++i) {
+                    const double e = C[i].enter[size_t(v)];
+                    mn[i] = std::min(mn[i], e); mx[i] = std::max(mx[i], e);
+                }
+            }
+            for (int i = 0; i < NC; ++i) { Mn[j][i][k] = mn[i]; Mx[j][i][k] = mx[i]; }
+        }
+    }
+    auto hasTip = [&](int c, int t) { return std::find(C[c].members.begin(), C[c].members.end(), t) != C[c].members.end(); };
+    auto pairOk = [&](int i, int ki, int j, int kj) {
+        // apart: no vertex of one is in the other's cut within a gap
+        if (Mn[j][i][kj] > ki + gapL && Mn[i][j][ki] > kj + gapL) return true;
+        // Inside another limb only a single limb (an ear on the head) - a
+        // group inside a group cut the head in layers.
+        if (C[j].members.size() == 1 && Mx[j][i][kj] <= ki - gapL && C[j].A[kj] < C[i].A[ki]) return true;   // j inside i
+        if (C[i].members.size() == 1 && Mx[i][j][ki] <= kj - gapL && C[i].A[ki] < C[j].A[kj]) return true;   // i inside j
+        return false;
+    };
+    // A whole state: every chosen pair apart or nested.
+    auto validState = [&](const std::vector<int> &st) {
+        for (int i = 0; i < NC; ++i) {
+            if (st[i] <= 0) continue;
+            for (int j = i + 1; j < NC; ++j)
+                if (st[j] > 0 && (C[i].members == C[j].members || !pairOk(i, st[i], j, st[j]))) return false;
+        }
+        return true;
+    };
+    // Energy: every tip that can be a limb pays for the smallest chosen limb
+    // holding it, or noCut if none does (bumps pay nothing).
+    // The largest limb any single-tip candidate can make of each tip: a cut
+    // is rewarded for how much of it it takes, whether ring or plane (each
+    // kind's own "reach the joint" reward is measured against its own joint,
+    // so a short ring cut at a hoof could beat a plane taking the whole leg).
+    std::vector<double> maxA(size_t(T), 0.0);
+    for (int c = 0; c < NC; ++c)
+        if (C[c].members.size() == 1 && !C[c].valid.empty())
+            maxA[size_t(C[c].members[0])] = std::max(maxA[size_t(C[c].members[0])], C[c].A[size_t(C[c].kTop)]);
+    auto energy = [&](const std::vector<int> &st) {
+        double E = 0.0;
+        for (int t = 0; t < T; ++t) {
+            if (!significant[t]) continue;
+            int best = -1;
+            for (int c = 0; c < NC; ++c)
+                if (st[c] > 0 && hasTip(c, t) && (best < 0 || C[c].A[st[c]] < C[best].A[st[best]])) best = c;
+            if (best < 0) { E += opt.noCut; continue; }
+            E += C[best].unary[st[best]];
+            if (C[best].members.size() == 1 && maxA[size_t(t)] > 0)
+                E += 0.6 * (1.0 - std::min(1.0, C[best].A[st[best]] / maxA[size_t(t)]));
+        }
+        return E;
+    };
+
+    std::vector<int> best(NC, 0);
+    double bestE = energy(best);
+    int accepted = 0, tried = 0;
+    for (int rs = 0; rs < std::max(1, opt.searchRestarts); ++rs) {
+        std::mt19937 rng(opt.seed + 7919u * quint32(rs));
+        std::uniform_real_distribution<double> U01(0.0, 1.0);
+        std::vector<int> st(NC, 0);
+        double E = energy(st);
+        const int N = std::max(100, opt.searchIters);
+        const double T0 = 0.5, T1 = 0.002;
+        for (int it = 0; it < N; ++it) {
+            const double temp = T0 * std::pow(T1 / T0, double(it) / N);
+            const int i = int(rng() % quint32(NC));
+            if (C[i].valid.empty()) continue;
+            int nk;
+            const double m = U01(rng);
+            if (m < 0.25) nk = 0;
+            else if (m < 0.6 || st[i] == 0) nk = C[i].valid[rng() % C[i].valid.size()];
+            else nk = st[i] + int(rng() % 7u) - 3;
+            if (nk == st[i]) continue;
+            if (nk > 0 && (nk >= levels || !(C[i].unary[nk] < HUGE_VAL))) continue;
+            ++tried;
+            const int old = st[i];
+            st[i] = nk;
+            if (!validState(st)) { st[i] = old; continue; }
+            const double En = energy(st);
+            const double dE = En - E;
+            if (dE <= 0.0 || U01(rng) < std::exp(-dE / temp)) {
+                E = En;
+                ++accepted;
+                if (E < bestE - 1e-12) { bestE = E; best = st; }
+            } else {
+                st[i] = old;
+            }
+        }
+    }
+    // Polish: the best radius for each candidate in turn (one may be held
+    // fixed), until nothing improves.
+    auto polish = [&](std::vector<int> st, int fixed) {
+        double E = energy(st);
+        for (bool improved = true; improved;) {
+            improved = false;
+            for (int i = 0; i < NC; ++i) {
+                if (i == fixed) continue;
+                std::vector<int> ks = C[i].valid;
+                ks.push_back(0);
+                for (int k : ks) {
+                    std::vector<int> t = st;
+                    t[i] = k;
+                    if (!validState(t)) continue;
+                    const double En = energy(t);
+                    if (En < E - 1e-12) { E = En; st = t; improved = true; }
+                }
+            }
+        }
+        return std::make_pair(E, st);
+    };
+    std::vector<std::pair<double, std::vector<int>>> pool;
+    pool.push_back(polish(best, -1));
+    // Alternatives round the best: each chosen cut moved 1.5% or 3% of the
+    // size down or up, or dropped, and the rest re-optimised round it.
+    {
+        const std::vector<int> top = pool[0].second;
+        for (int i = 0; i < NC; ++i) {
+            if (top[i] <= 0) continue;
+            for (int dk : { -6, -3, 3, 6, -100000 }) {
+                const int k = dk == -100000 ? 0 : top[i] + dk;
+                if (k != 0 && (k < 0 || k >= levels || !(C[i].unary[k] < HUGE_VAL))) continue;
+                std::vector<int> st = top;
+                st[i] = k;
+                if (!validState(st)) continue;
+                pool.push_back(polish(st, i));
+            }
+        }
+    }
+    std::sort(pool.begin(), pool.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+    std::vector<std::pair<double, std::vector<int>>> kept;
+    for (const auto &cand : pool) {
+        bool distinct = true;
+        for (const auto &k : kept) {
+            int diff = 0;
+            for (int i = 0; i < NC; ++i) diff += (cand.second[i] > 0) != (k.second[i] > 0) ? 100 : std::abs(cand.second[i] - k.second[i]);
+            if (diff < 4) { distinct = false; break; }          // under 2% of the size apart in total
+        }
+        if (distinct) kept.push_back(cand);
+        if (int(kept.size()) >= std::max(1, opt.shortlist)) break;
+    }
+
+    SplitList out;
+    for (const auto &kp : kept) {
+        std::vector<SplitChoice> cuts;
+        for (int i = 0; i < NC; ++i) {
+            if (kp.second[i] <= 0) continue;
+            SplitChoice c;
+            c.tip = tips[C[i].members.front()];
+            c.r = kp.second[i] * step;
+            c.area = C[i].A[kp.second[i]];
+            c.neck = C[i].neck[kp.second[i]];
+            c.plan = C[i].plan[kp.second[i]];
+            c.d = C[i].d;
+            // The region on the tip's side of the plane, reachable from the
+            // tip(s): field = distance from the plane there (and at its rim,
+            // for the exact crossing), -1e300 elsewhere.
+            if (!C[i].planar) {
+                const double r = kp.second[i] * step;
+                c.field.assign(size_t(n), -1e300);
+                for (int v = 0; v < n; ++v) if (C[i].d[size_t(v)] < 1e299) c.field[size_t(v)] = r - C[i].d[size_t(v)];
+            } else {
+                const int k = kp.second[i];
+                const V3 pc = C[i].cs[size_t(k)], pt = C[i].tg[size_t(k)];
+                auto sd = [&](int v) { return dot(sub(S.p[v], pc), pt); };
+                c.field.assign(size_t(n), -1e300);
+                std::vector<char> in(size_t(n), 0);
+                std::vector<int> reg;
+                for (int m : C[i].members)
+                    if (sd(tips[m]) < 0 && !in[size_t(tips[m])]) { in[size_t(tips[m])] = 1; reg.push_back(tips[m]); }
+                for (size_t h = 0; h < reg.size(); ++h)
+                    for (const auto &nw : nbr[size_t(reg[h])])
+                        if (!in[size_t(nw.first)] && sd(nw.first) < 0) { in[size_t(nw.first)] = 1; reg.push_back(nw.first); }
+                for (int v : reg) {
+                    c.field[size_t(v)] = -sd(v);
+                    for (const auto &nw : nbr[size_t(v)]) if (!in[size_t(nw.first)]) c.field[size_t(nw.first)] = -sd(nw.first);
+                }
+            }
+            cuts.push_back(std::move(c));
+        }
+        out.push_back({ kp.first, std::move(cuts) });
+    }
+    if (notes) {
+        int sig = 0;
+        for (char c : significant) sig += c;
+        *notes << QStringLiteral("split search (simulated annealing): %1 tips in %2 candidate limbs (tips and groups of "
+                                 "tips), %3 tips could be cut; best: %4 cut(s), energy %5 (no cuts: %6); %7 of %8 moves "
+                                 "accepted, %9 restart(s)")
+                      .arg(T).arg(NC).arg(sig).arg(out.empty() ? 0 : int(out[0].second.size()))
+                      .arg(out.empty() ? 0.0 : out[0].first, 0, 'f', 3).arg(sig * opt.noCut, 0, 'f', 3)
+                      .arg(accepted).arg(tried).arg(std::max(1, opt.searchRestarts));
+        QStringList es;
+        for (const auto &o : out) es << QString::number(o.first, 'f', 3);
+        *notes << QStringLiteral("shortlist: %1 different split(s), energies %2 (from %3 tried)")
+                      .arg(out.size()).arg(es.join(QStringLiteral(", "))).arg(pool.size());
+        const int pk = std::clamp(opt.pick, 0, std::max(0, int(kept.size()) - 1));
+        if (!kept.empty())
+            for (int i = 0; i < NC; ++i) {
+                const int k = kept[size_t(pk)].second[i];
+                if (k <= 0) continue;
+                *notes << QStringLiteral("  cut %1% of the size from %2 tip(s) (%6): neck %3, planarity %4, %5% of the area")
+                              .arg(100.0 * k * step / size, 0, 'f', 1).arg(C[i].members.size())
+                              .arg(C[i].neck[k], 0, 'f', 2).arg(C[i].plan[k], 0, 'f', 3)
+                              .arg(100.0 * C[i].A[k] / totalArea, 0, 'f', 1).arg(C[i].planar ? QStringLiteral("plane") : QStringLiteral("ring"));
+            }
+    }
+    return out;
+}
+
+}  // namespace
+
 // Two stages, one cut pass:
 //  1. WHICH limbs: the merge tree of a harmonic Morse function f (0 on a
 //     patch of the body round the root, 1 at the tips). Regions meeting at a
@@ -2168,10 +2915,56 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
         }
     }
 
+    std::vector<double> f(n, 0.5);
+    // A limb: vertices v with field[v] > thr (for a ring: field = -distance).
+    struct Limb {
+        std::vector<double> field; double thr; double area; int tip; bool ring; double length;
+        std::vector<double> fField; double fThr; double fArea;      // the merge-tree cut, kept as a fallback
+        std::vector<double> dist;                                   // ring distance from the tip
+        int parent = -1;                                            // the limb it sits on (a horn on the head)
+    };
+    std::vector<Limb> limbs;
+    int moved = 0, shrunk = 0, dropped = 0, bumps = 0, nested = 0;
+    if (opt.search) {
+        // The search: every limb a ring round its tip, all chosen together.
+        SplitList list = searchSplit(S, nbr, area, totalArea, size, root, g, tips, opt, notes);
+        if (opt.pick < 0 || opt.pick >= int(list.size())) {
+            if (error) *error = QStringLiteral("the search found %1 different split(s); no split %2").arg(list.size()).arg(opt.pick + 1);
+            return false;
+        }
+        if (notes)
+            *notes << QStringLiteral("split %1 of %2 on the shortlist (energy %3)").arg(opt.pick + 1).arg(list.size())
+                          .arg(list[size_t(opt.pick)].first, 0, 'f', 3);
+        std::vector<SplitChoice> &ch = list[size_t(opt.pick)].second;
+        for (SplitChoice &c : ch) {
+            Limb L;
+            L.dist = std::move(c.d);
+            // The cut is a plane across the limb: field = distance from it on
+            // the limb's side, so the mesh is split exactly on the plane.
+            L.field = std::move(c.field);
+            L.thr = 0.0;
+            L.area = c.area;
+            L.tip = c.tip;
+            L.ring = true;
+            L.length = c.r;
+            L.fField = L.field; L.fThr = L.thr; L.fArea = L.area;
+            limbs.push_back(std::move(L));
+        }
+        // Smaller first (a nested limb is labelled before the one it sits on);
+        // its parent: the smallest limb holding all of it.
+        std::sort(limbs.begin(), limbs.end(), [](const Limb &x, const Limb &y) { return x.area < y.area; });
+        moved = int(limbs.size());
+        for (size_t j = 0; j < limbs.size(); ++j)
+            for (size_t i = j + 1; i < limbs.size(); ++i) {
+                bool inside = true;
+                for (int v = 0; v < n && inside; ++v)
+                    if (limbs[j].field[v] > limbs[j].thr && !(limbs[i].field[v] > limbs[i].thr)) inside = false;
+                if (inside) { limbs[j].parent = int(i); ++nested; break; }
+            }
+    } else {
     // ---- stage 1: the Morse function and its merge tree
     double gmax = 0.0;
     for (double x : g) if (x < 1e299) gmax = std::max(gmax, x);
-    std::vector<double> f(n, 0.5);
     {
         std::vector<char> fixed(n, 0);
         for (int v = 0; v < n; ++v) if (g[v] <= 0.15 * gmax) { fixed[v] = 1; f[v] = 0.0; }
@@ -2194,14 +2987,6 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
         for (size_t k = 0; k < idx.size(); ++k) f[idx[k]] = x[k];
     }
 
-    // A limb: vertices v with field[v] > thr (for a ring: field = -distance).
-    struct Limb {
-        std::vector<double> field; double thr; double area; int tip; bool ring; double length;
-        std::vector<double> fField; double fThr; double fArea;      // the merge-tree cut, kept as a fallback
-        std::vector<double> dist;                                   // ring distance from the tip
-        int parent = -1;                                            // the limb it sits on (a horn on the head)
-    };
-    std::vector<Limb> limbs;
     {
         std::vector<int> order(n);
         for (int v = 0; v < n; ++v) order[v] = v;
@@ -2291,7 +3076,6 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
     const int K = int(maxLen / step) + 1;
     const int wCalm = std::max(2, int(std::lround(0.05 * size / step)));
     const int wRise = std::max(2, int(std::lround(0.15 * size / step)));
-    int moved = 0;
     for (Limb &L : limbs) {
         std::vector<double> d = geodesic(S, nbr, { L.tip }, maxLen + 0.2 * size);
         const std::vector<double> P = ringLengths(S, d, step, K + wRise + 2);
@@ -2348,7 +3132,6 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
     // of vertices, so every triangle meets at most one ring.
     std::vector<int> owner(n, -1);
     std::vector<Limb> keep;
-    int dropped = 0, shrunk = 0, nested = 0;
     // A smaller limb lying wholly inside L - its region and every neighbour of
     // it inside L's region (a horn on the head) - is nested, not a clash: it is
     // cut off first and L is cut from what is left.
@@ -2379,7 +3162,6 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
         }
         return false;
     };
-    int bumps = 0;
     for (auto &L : limbs) {
         // A limb must be a tube, not a bump (spot's udder: 1% of the area but
         // short and wide - its fit found no usable levels, leaving a hole; a
@@ -2434,6 +3216,7 @@ bool HarmonicFit::splitLimbs(const MeshData &mesh, const SplitOptions &opt, QVec
         keep.push_back(std::move(L));
     }
     limbs.swap(keep);
+    }  // the rules (opt.search off)
 
     // Labels: smaller limbs were kept first, so a horn keeps its vertices and
     // the head gets the rest of its region.
@@ -2752,4 +3535,188 @@ int HarmonicFit::pushToEnclose(Result *r, const MeshData &mesh, int rounds, doub
     for (size_t m = 0; m < bestC.size(); ++m)
         for (int a = 0; a < 3; ++a) r->ctrl[int(3 * m) + a] = bestC[m][a];
     return bestOut;
+}
+
+MeshData HarmonicFit::envelope(const MeshData &part, double offset, int voxels, QString *error)
+{
+    Surf S;
+    int bnd = 0, genus = -1;
+    QString err;
+    if (!buildSurface(part, &S, &bnd, &genus, &err)) { if (error) *error = err; return MeshData(); }
+    V3 lo = { 1e300, 1e300, 1e300 }, hi = { -1e300, -1e300, -1e300 };
+    for (const V3 &q : S.p) for (int a = 0; a < 3; ++a) { lo[a] = std::min(lo[a], q[a]); hi[a] = std::max(hi[a], q[a]); }
+    const double size = len(sub(hi, lo));
+    const double ext = std::max({ hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2] });
+    Grid G;
+    G.h = ext / std::max(16, voxels);
+    const double offVox = offset * size / G.h;
+    const int pad = int(std::ceil(offVox)) + 4;
+    G.o = { lo[0] - pad * G.h, lo[1] - pad * G.h, lo[2] - pad * G.h };
+    G.nx = int(std::ceil((hi[0] - lo[0]) / G.h)) + 1 + 2 * pad;
+    G.ny = int(std::ceil((hi[1] - lo[1]) / G.h)) + 1 + 2 * pad;
+    G.nz = int(std::ceil((hi[2] - lo[2]) / G.h)) + 1 + 2 * pad;
+    const std::vector<char> inside = insideVoxels(S, G);
+
+    // Distance (voxels) from the inside region, chamfered over 26 neighbours.
+    std::vector<double> dist(G.size(), 1e9);
+    for (size_t v = 0; v < G.size(); ++v) if (inside[v]) dist[v] = 0.0;
+    for (int pass = 0; pass < 4; ++pass) {
+        const int sgn = (pass % 2 == 0) ? 1 : -1;
+        for (int kk = 1; kk < G.nz - 1; ++kk)
+            for (int jj = 1; jj < G.ny - 1; ++jj)
+                for (int ii = 1; ii < G.nx - 1; ++ii) {
+                    const int i = sgn > 0 ? ii : G.nx - 1 - ii, j = sgn > 0 ? jj : G.ny - 1 - jj, k = sgn > 0 ? kk : G.nz - 1 - kk;
+                    const int v = G.idx(i, j, k);
+                    double best = dist[v];
+                    for (int d = 0; d < 27; ++d) {
+                        const int di = d % 3 - 1, dj = (d / 3) % 3 - 1, dk = d / 9 - 1;
+                        if (!di && !dj && !dk) continue;
+                        best = std::min(best, dist[G.idx(i + di, j + dj, k + dk)] + std::sqrt(double(di * di + dj * dj + dk * dk)));
+                    }
+                    dist[v] = best;
+                }
+    }
+    // The field: > 0 inside the envelope; softened once so the surface is not
+    // a staircase (the offset keeps it outside the part).
+    std::vector<double> f(G.size());
+    for (size_t v = 0; v < G.size(); ++v) f[v] = offVox - dist[v];
+    for (int pass = 0; pass < 2; ++pass) {
+        std::vector<double> g = f;
+        for (int k = 1; k < G.nz - 1; ++k)
+            for (int j = 1; j < G.ny - 1; ++j)
+                for (int i = 1; i < G.nx - 1; ++i) {
+                    double sum = 0.0;
+                    for (int d = 0; d < 27; ++d) sum += f[G.idx(i + d % 3 - 1, j + (d / 3) % 3 - 1, k + d / 9 - 1)];
+                    g[G.idx(i, j, k)] = sum / 27.0;
+                }
+        f.swap(g);
+    }
+
+    // Marching tetrahedra (six per cube, the same split in every cube, so
+    // neighbouring cubes agree and the surface is watertight).
+    static const int tets[6][4] = { { 0, 1, 3, 7 }, { 0, 1, 5, 7 }, { 0, 2, 3, 7 },
+                                    { 0, 2, 6, 7 }, { 0, 4, 5, 7 }, { 0, 4, 6, 7 } };
+    MeshData out;
+    std::unordered_map<long long, uint32_t> edgePt;
+    auto corner = [&](int i, int j, int k, int c) { return G.idx(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1)); };
+    auto point = [&](int a, int b) {
+        const long long key = edgeKey(a, b);
+        auto it = edgePt.find(key);
+        if (it != edgePt.end()) return it->second;
+        const double t = f[a] / (f[a] - f[b]);
+        auto pos = [&](int v) { return G.pos(v % G.nx, (v / G.nx) % G.ny, v / (G.nx * G.ny)); };
+        const V3 p = add(pos(a), mul(sub(pos(b), pos(a)), t));
+        const uint32_t id = out.addVertex(p[0], p[1], p[2]);
+        edgePt.emplace(key, id);
+        return id;
+    };
+    auto posV = [&](int v) { return G.pos(v % G.nx, (v / G.nx) % G.ny, v / (G.nx * G.ny)); };
+    auto emitTri = [&](uint32_t a, uint32_t b, uint32_t c, int inV, int outV) {
+        const V3 pa = { out.pos[3 * a], out.pos[3 * a + 1], out.pos[3 * a + 2] };
+        const V3 pb = { out.pos[3 * b], out.pos[3 * b + 1], out.pos[3 * b + 2] };
+        const V3 pc = { out.pos[3 * c], out.pos[3 * c + 1], out.pos[3 * c + 2] };
+        const V3 n = cross(sub(pb, pa), sub(pc, pa));
+        if (dot(n, sub(posV(outV), posV(inV))) < 0) std::swap(b, c);   // face outward
+        if (a == b || b == c || a == c) return;
+        out.tris.push_back(a); out.tris.push_back(b); out.tris.push_back(c);
+    };
+    for (int k = 0; k < G.nz - 1; ++k)
+        for (int j = 0; j < G.ny - 1; ++j)
+            for (int i = 0; i < G.nx - 1; ++i)
+                for (const auto &tt : tets) {
+                    int v[4], in[4], out4[4], ni = 0, no = 0;
+                    for (int c = 0; c < 4; ++c) {
+                        v[c] = corner(i, j, k, tt[c]);
+                        if (f[v[c]] > 0) in[ni++] = v[c]; else out4[no++] = v[c];
+                    }
+                    if (ni == 0 || ni == 4) continue;
+                    if (ni == 1) {
+                        emitTri(point(in[0], out4[0]), point(in[0], out4[1]), point(in[0], out4[2]), in[0], out4[0]);
+                    } else if (ni == 3) {
+                        emitTri(point(out4[0], in[0]), point(out4[0], in[1]), point(out4[0], in[2]), in[0], out4[0]);
+                    } else {
+                        const uint32_t a = point(in[0], out4[0]), b = point(in[0], out4[1]);
+                        const uint32_t c = point(in[1], out4[0]), d = point(in[1], out4[1]);
+                        emitTri(a, b, d, in[0], out4[0]);
+                        emitTri(a, d, c, in[0], out4[0]);
+                    }
+                }
+
+    // Taubin smoothing (no shrinking).
+    const int nvtx = out.vertexCount();
+    std::vector<std::vector<int>> nb(nvtx);
+    for (int t = 0; t < out.triangleCount(); ++t)
+        for (int k = 0; k < 3; ++k) {
+            const int a = int(out.tris[3 * t + k]), b = int(out.tris[3 * t + (k + 1) % 3]);
+            nb[a].push_back(b);
+            nb[b].push_back(a);
+        }
+    for (auto &l : nb) { std::sort(l.begin(), l.end()); l.erase(std::unique(l.begin(), l.end()), l.end()); }
+    for (int it = 0; it < 12; ++it) {
+        const double lam = (it % 2 == 0) ? 0.5 : -0.53;
+        QVector<float> np = out.pos;
+        for (int v = 0; v < nvtx; ++v) {
+            if (nb[v].empty()) continue;
+            double m[3] = { 0, 0, 0 };
+            for (int w : nb[v]) for (int a = 0; a < 3; ++a) m[a] += out.pos[3 * w + a];
+            for (int a = 0; a < 3; ++a) {
+                m[a] /= nb[v].size();
+                np[3 * v + a] = float(out.pos[3 * v + a] + lam * (m[a] - out.pos[3 * v + a]));
+            }
+        }
+        out.pos.swap(np);
+    }
+    out.computeBounds();
+    out.computeNormals();
+    if (out.triangleCount() == 0 && error) *error = QStringLiteral("the envelope came out empty");
+    return out;
+}
+
+HarmonicFit::SplitHealth HarmonicFit::splitHealth(const QVector<Part> &parts)
+{
+    SplitHealth h;
+    QElapsedTimer tm;
+    tm.start();
+    for (const Part &P : parts) {
+        // The full enclosing fit (envelope + pole-to-pole fit, thicker if the
+        // part sticks out), coarse.
+        Options o;
+        o.nu = 16;
+        o.nv = 16;
+        o.nw = 4;
+        o.voxels = 40;
+        o.maxIter = 15;
+        o.closedEnds = true;
+        double off = 0.05, usedOff = 0.0;
+        Result best;
+        int bestOut = std::numeric_limits<int>::max(), usedTry = 0;
+        for (int t = 0; t < 3; ++t, off *= 1.6) {
+            QString err;
+            const MeshData env = envelope(P.mesh, off, 32, &err);
+            if (env.triangleCount() == 0) break;
+            Result r = fit(env, o);
+            if (!r.ok) continue;
+            const int outN = outsideCount(r, P.mesh);
+            if (outN < bestOut) { bestOut = outN; best = r; usedTry = t; usedOff = off; }
+            if (outN == 0) break;
+        }
+        if (!best.ok) {
+            ++h.failed;
+            h.lines << QStringLiteral("%1: no trial fit").arg(P.name);
+            continue;
+        }
+        QString err;
+        const Trivariate tv = toTrivariate(best, P.name, &err);
+        const Check ck = tv.isValid() ? checkJacobian(tv, 14) : Check();
+        if (!tv.isValid()) ++h.failed;
+        if (ck.nonPositive > 0) { ++h.folded; h.folds += ck.nonPositive; }
+        h.retries += usedTry;
+        h.outside += bestOut;
+        h.lines << QStringLiteral("%1: %2 fold(s) of %3 samples, envelope %4%, %5 vertex(es) outside")
+                       .arg(P.name).arg(ck.nonPositive).arg(ck.samples).arg(100.0 * usedOff, 0, 'f', 1).arg(bestOut);
+    }
+    h.score = 1e7 * h.failed + 1e5 * h.folded + 100.0 * h.folds + 10.0 * h.retries + 0.1 * h.outside;
+    h.ok = true;
+    h.ms = tm.elapsed();
+    return h;
 }

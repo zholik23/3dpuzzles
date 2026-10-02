@@ -7,6 +7,7 @@
 #include "CageBoolean.h"
 #include "DivisionReport.h"
 #include "HarmonicFit.h"
+#include "CutInD.h"
 #include "CutWarp.h"
 #include "IritJoint.h"
 #include "MeshData.h"
@@ -39,6 +40,11 @@ class AppController : public QObject {
     Q_PROPERTY(QString trivariateName READ trivariateName NOTIFY trivariateChanged)
     Q_PROPERTY(QString trivariateInfo READ trivariateInfo NOTIFY trivariateChanged)
     Q_PROPERTY(bool    fitting        READ fitting        NOTIFY fittingChanged)
+    // The interlocking check of Cut-in-D pieces (runs on a worker thread).
+    Q_PROPERTY(bool    checking       READ checking       NOTIFY checkingChanged)
+    // The limb split runs on a worker thread (search + trial fits).
+    Q_PROPERTY(bool    splitting      READ splitting      NOTIFY fittingChanged)
+    Q_PROPERTY(bool    canCheckInterlocking READ canCheckInterlocking NOTIFY piecesChanged)
 
     Q_PROPERTY(QString cutShapeInfo READ cutShapeInfo NOTIFY cutShapeChanged)
 
@@ -77,6 +83,14 @@ public:
     // gets its own trivariate next.
     Q_INVOKABLE void splitLimbs();
 
+    // Interlocking of the Cut-in-D pieces: every exact cut is sampled in D, the
+    // two pieces meeting at each sample are found, the contact normal is
+    // n' ~ J^-T n_D, and the flat joint caps between limbs add theirs; then the
+    // translational directional blocking graph - which pieces and groups can
+    // slide out, single key, level k, one way to take it apart. Writes
+    // <model>_interlocking.md next to the model.
+    Q_INVOKABLE void checkInterlocking();
+
     // Experimental: fit every part so its block encloses the part and trim
     // pieces by it (Elber section 5). Off by default - see fitTrivariate.
     void setEncloseTrim(bool on) { m_encloseTrim = on; }
@@ -111,6 +125,12 @@ public:
     QString trivariateName() const { return m_triv.label(); }
     QString trivariateInfo() const { return m_trivInfo; }
     bool    fitting()        const { return m_fitting; }
+    bool    checking()       const { return m_checking; }
+    bool    splitting()      const { return m_splitting; }
+    bool    canCheckInterlocking() const
+    {
+        return m_blocksEnclose && m_pieces.size() >= 2 && !m_vrepCuts.isEmpty();
+    }
 
     QString cutShapeInfo() const { return m_warp.describe(); }
     int     pieceCount()   const { return m_pieces.size(); }
@@ -135,6 +155,7 @@ signals:
     void cutShapeChanged();
     void jointsChanged();
     void fittingChanged();
+    void checkingChanged();
 
 private:
     void setError(const QString &msg);
@@ -147,6 +168,11 @@ private:
     void runTrivCellDivision(const QVector<CellBox> &cells, const QString &note);
     void runBspInD(int pieces);
     void finishFit();
+    void finishInterlocking();
+    void finishSplit();
+    // Shows a split's parts as pieces and makes them the parts to fit.
+    void adoptSplit(const QVector<HarmonicFit::Part> &parts, const QStringList &notes, const QString &rank);
+    MeshData jointCapTriangles() const;   // the joint caps of the limb split, as triangles
     void finishPartsFit(const QVector<HarmonicFit::Result> &all);
     void describePieces(const QString &note, int gridCells, const QString &warning);
     void applyJoints();
@@ -192,6 +218,26 @@ private:
     // The harmonic fit, running on a worker thread; m_fitPath is the model it
     // was started for, so a result that arrives after another load is dropped.
     QFutureWatcher<QVector<HarmonicFit::Result>> m_fitWatcher;
+    QFutureWatcher<QStringList> m_lockWatcher;   // status line, detail, report path
+    // The limb split: the search's shortlist, each split re-ranked by a trial
+    // fit of its parts; kept in that order, so a full fit that folds can fall
+    // back to the next one.
+    struct SplitRun {
+        QVector<QVector<HarmonicFit::Part>> alts;
+        QVector<HarmonicFit::SplitHealth>   health;
+        QVector<QStringList>                notes;
+        QString                             error;
+        qint64                              ms = 0;
+    };
+    QFutureWatcher<SplitRun>            m_splitWatcher;
+    bool                                m_splitting = false;
+    bool                                m_fitAfterSplit = false;
+    int                                 m_fitDetail = 0;
+    QVector<QVector<HarmonicFit::Part>> m_splitAlts;      // best first
+    QVector<QStringList>                m_splitNotes;
+    QStringList                         m_splitRank;      // one line per split
+    int                                 m_splitAlt = 0;   // the one in m_parts
+    bool                        m_checking = false;
     bool    m_fitting = false;
     QString m_fitPath;
 
@@ -201,6 +247,11 @@ private:
     QVector<CellBox> m_vrepCells;
     QVector<int>     m_vrepBlockOf;     // per cell: which of m_blocks it is in (empty: m_triv)
     QVector<int>     m_vrepPieceOf;     // per cell: the piece it belongs to (a glued piece has several)
+    // Cut in D: every cut, exact (its surface in its block's D), the block it
+    // is in, and per piece the cuts bounding it with its side of each.
+    QVector<CutInD::Cut>              m_vrepCuts;
+    QVector<int>                      m_vrepCutBlock;
+    QVector<QVector<QPair<int, int>>> m_vrepPieceCuts;
 
     // The limb split of the loaded mesh (Split limbs), and after Fit
     // trivariate one trivariate per part: a multi-block V-rep. m_triv then
@@ -213,6 +264,16 @@ private:
     QVector<HarmonicFit::Result> m_blockFits;   // block -> its control net (for cutting its part in D)
     bool                       m_blocksEnclose = false;   // blocks enclose their parts: trim pieces by them
     bool                       m_encloseTrim = false;
+    // Curved cuts in D for the fitted path. Fixed for now; to be chosen
+    // automatically (simulated annealing on the blocking analysis), not by hand.
+    static constexpr double    kCutBend = 0.25;
+    static constexpr int       kCutWaves = 1;
+    bool                       m_curvedCuts = false;
+    // Divide cuts the whole model (CutInD::cutWhole): pieces cross the limb
+    // split's joints, which only supplies the coordinates. Off: each part is
+    // cut on its own and small parts are glued on (the split shows).
+    static constexpr bool      kWholeCut = true;
+    bool                       m_wholeCutUsed = false;  // the pieces came from cutWhole
     bool                       m_fitParts = false;
 
     JointParams m_joint;

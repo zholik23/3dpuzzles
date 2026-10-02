@@ -202,7 +202,7 @@ ApplicationWindow {
                     // Martin, Cohen & Kirby 2009: the mesh becomes a real
                     // trivariate B-spline (V-rep), so Random cuts its domain D.
                     text: app.fitting ? "Fitting…" : "Fit trivariate"
-                    enabled: app.hasMesh && !app.fitting
+                    enabled: app.hasMesh && !app.fitting && !app.splitting
                     onClicked: app.fitTrivariate(fitDetail.currentIndex)
                     ToolTip.visible: hovered
                     ToolTip.text: "Harmonic volumetric parameterization of the loaded mesh " +
@@ -213,8 +213,8 @@ ApplicationWindow {
                 Button {
                     // Morse split: cuts the limbs off at their joints so every
                     // part is a tube a trivariate can fit.
-                    text: "Split limbs"
-                    enabled: app.hasMesh && !app.fitting
+                    text: app.splitting ? "Splitting…" : "Split limbs"
+                    enabled: app.hasMesh && !app.fitting && !app.splitting
                     onClicked: app.splitLimbs()
                     ToolTip.visible: hovered
                     ToolTip.text: "Cuts legs, head, tail, ears off at their joints (harmonic Morse " +
@@ -234,6 +234,17 @@ ApplicationWindow {
                     text: "Back to model"
                     enabled: !app.dividesMesh
                     onClicked: app.showWholeModel()
+                }
+                Button {
+                    // The research question on the pieces just cut: do they
+                    // interlock? Contacts from the exact cuts in D.
+                    text: app.checking ? "Checking…" : "Check interlocking"
+                    enabled: app.canCheckInterlocking && !app.checking
+                    onClicked: app.checkInterlocking()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "Directional blocking graph of the pieces from Cut in D: contact normals " +
+                                  "n' ~ J^-T n on the exact cuts, plus the limb joints. Single key, level k, " +
+                                  "one way to take it apart. Writes <model>_interlocking.md."
                 }
                 Button {
                     // Its own window: opens a saved trivariate (tvs_*.itd) and
@@ -384,7 +395,7 @@ ApplicationWindow {
                 color: app.hasError ? "#e88" : "#9aa4b0"
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
-                maximumLineCount: 3
+                maximumLineCount: 12
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }

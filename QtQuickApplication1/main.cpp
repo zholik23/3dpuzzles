@@ -7,13 +7,16 @@
 #include "CurvedBsp.h"
 #include "DbgAnalysis.h"
 #include "CadLoader.h"
+#include "CutInD.h"
 #include "HarmonicFit.h"
 #include "MeshView.h"
 #include "PuzzleAnalyzer.h"
 
 #include <QDebug>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileInfo>
+#include <QTextStream>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -121,6 +124,35 @@ int main(int argc, char *argv[])
             return r.valid ? 0 : 1;
         }
 
+        // TEMPORARY - the split shortlist re-ranked by trial fits:
+        //   app --splitrank <model.obj>
+        if (a.size() > 2 && a.at(1) == QStringLiteral("--splitrank")) {
+            IritGuard::installHandlers();
+            MeshData mesh;
+            QString err;
+            if (!CadLoader::load(a.at(2), &mesh, &err)) return 2;
+            HarmonicFit::SplitOptions so;
+            for (int pick = 0; pick < so.shortlist; ++pick) {
+                so.pick = pick;
+                QVector<HarmonicFit::Part> parts;
+                QStringList notes;
+                if (!HarmonicFit::splitLimbs(mesh, so, &parts, &notes, &err)) {
+                    qInfo().noquote() << "RANK  " + err;
+                    break;
+                }
+                for (const QString &n : notes)
+                    if (n.startsWith(QStringLiteral("split ")) || n.startsWith(QStringLiteral("shortlist")) || n.startsWith(QStringLiteral("  cut")))
+                        qInfo().noquote() << "RANK  " + n;
+                const HarmonicFit::SplitHealth h = HarmonicFit::splitHealth(parts);
+                qInfo().noquote() << QStringLiteral("RANK  split %1: %2 parts, score %3 (failed %4, folded parts %5, folds %6, "
+                                                    "thickenings %7, outside %8) · %9 ms")
+                                         .arg(pick + 1).arg(parts.size()).arg(h.score, 0, 'g', 6).arg(h.failed).arg(h.folded)
+                                         .arg(h.folds).arg(h.retries).arg(h.outside).arg(h.ms);
+                for (const QString &l : h.lines) qInfo().noquote() << "RANK    " + l;
+            }
+            return 0;
+        }
+
         // TEMPORARY - Morse split of a mesh into tube-like parts:
         //   app --split <model.obj>
         if (a.size() > 2 && a.at(1) == QStringLiteral("--split")) {
@@ -140,6 +172,9 @@ int main(int argc, char *argv[])
                 return 1;
             }
             for (const QString &n : notes) qInfo().noquote() << "SPLIT  " + n;
+            for (const auto &P : parts)
+                qInfo().noquote() << QStringLiteral("SPLIT  %1: open edges %2 (by index), %3 (by position)")
+                                         .arg(P.name).arg(CutInD::openEdges(P.mesh)).arg(CutInD::openEdgesWelded(P.mesh));
             double sum = 0.0;
             for (const auto &P : parts) {
                 const double v = IritSolid::signedVolume(P.mesh);
@@ -148,6 +183,19 @@ int main(int argc, char *argv[])
                                          .arg(P.mesh.bmin[0], 0, 'f', 2).arg(P.mesh.bmax[0], 0, 'f', 2)
                                          .arg(P.mesh.bmin[1], 0, 'f', 2).arg(P.mesh.bmax[1], 0, 'f', 2)
                                          .arg(P.mesh.bmin[2], 0, 'f', 2).arg(P.mesh.bmax[2], 0, 'f', 2);
+            }
+            // SPLIT_OBJ=<dir>: every part as <dir>/part_<i>.obj (to look at).
+            if (qEnvironmentVariableIsSet("SPLIT_OBJ")) {
+                const QString dir = qEnvironmentVariable("SPLIT_OBJ");
+                for (int i = 0; i < parts.size(); ++i) {
+                    QFile f(dir + QStringLiteral("/part_%1.obj").arg(i));
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) continue;
+                    QTextStream o(&f);
+                    const MeshData &m = parts[i].mesh;
+                    for (int v = 0; v < m.vertexCount(); ++v) o << "v " << m.pos[3 * v] << " " << m.pos[3 * v + 1] << " " << m.pos[3 * v + 2] << '\n';
+                    for (int t = 0; t < m.triangleCount(); ++t)
+                        o << "f " << m.tris[3 * t] + 1 << " " << m.tris[3 * t + 1] + 1 << " " << m.tris[3 * t + 2] + 1 << '\n';
+                }
             }
             qInfo().noquote() << QStringLiteral("SPLIT  parts sum %1, model %2")
                                      .arg(sum, 0, 'g', 6).arg(IritSolid::signedVolume(mesh), 0, 'g', 6);
@@ -160,17 +208,34 @@ int main(int argc, char *argv[])
             AppController c;
             c.loadPath(a.at(2));
             if (a.size() > 5 && a.at(5) == QStringLiteral("trim")) c.setEncloseTrim(true);
-            c.splitLimbs();
-            qInfo().noquote() << "APP  " + c.status();
+            // Fit trivariate splits first (on a worker), then fits.
             QEventLoop loop;
-            QObject::connect(&c, &AppController::fittingChanged, &loop, [&]() { if (!c.fitting()) loop.quit(); });
+            QObject::connect(&c, &AppController::fittingChanged, &loop, [&]() {
+                if (!c.fitting() && !c.splitting()) loop.quit();
+            });
             c.fitTrivariate(0);
-            if (c.fitting()) loop.exec();
+            if (c.fitting() || c.splitting()) loop.exec();
+            // The split hands over to the fit in between: wait for that too.
+            while (c.fitting() || c.splitting()) loop.exec();
             qInfo().noquote() << "APP  " + c.status();
             qInfo().noquote() << "APP  " + c.detail();
             c.divideRandom(a.at(3).toInt());
             qInfo().noquote() << "APP  " + c.status();
             qInfo().noquote() << "APP  " + c.detail();
+            // PIECES_OBJ=<dir>: every piece as <dir>/part_<i>.obj (to look at).
+            if (qEnvironmentVariableIsSet("PIECES_OBJ")) {
+                const QString dir = qEnvironmentVariable("PIECES_OBJ");
+                const auto &pcs = c.pieces();
+                for (int i = 0; i < pcs.size(); ++i) {
+                    QFile f(dir + QStringLiteral("/part_%1.obj").arg(i));
+                    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) continue;
+                    QTextStream o(&f);
+                    const MeshData &m = pcs[i].mesh;
+                    for (int v = 0; v < m.vertexCount(); ++v) o << "v " << m.pos[3 * v] << " " << m.pos[3 * v + 1] << " " << m.pos[3 * v + 2] << '\n';
+                    for (int t = 0; t < m.triangleCount(); ++t)
+                        o << "f " << m.tris[3 * t] + 1 << " " << m.tris[3 * t + 1] + 1 << " " << m.tris[3 * t + 2] + 1 << '\n';
+                }
+            }
             {
                 double sum = 0.0;
                 for (const PuzzlePiece &pc : c.pieces()) sum += std::fabs(IritSolid::signedVolume(pc.mesh));   // tessellated pieces face inward
@@ -183,6 +248,30 @@ int main(int argc, char *argv[])
             }
             c.savePieces(QUrl::fromLocalFile(a.at(4)), false, false);
             qInfo().noquote() << "APP  " + c.status() + " | " + c.detail();
+            return 0;
+        }
+
+        // TEMPORARY - the body's enclosing trivariate and its cut:
+        //   app --cutbody <model.obj> offset pieces
+        if (a.size() > 4 && a.at(1) == QStringLiteral("--cutbody")) {
+            MeshData mesh;
+            QString err;
+            if (!CadLoader::load(a.at(2), &mesh, &err)) return 2;
+            QVector<HarmonicFit::Part> parts;
+            QStringList notes;
+            HarmonicFit::splitLimbs(mesh, HarmonicFit::SplitOptions(), &parts, &notes, &err);
+            const MeshData env = HarmonicFit::envelope(parts[0].mesh, a.at(3).toDouble(), 48, &err);
+            HarmonicFit::Options o;
+            o.closedEnds = true;
+            const HarmonicFit::Result r = HarmonicFit::fit(env, o);
+            qInfo().noquote() << "CB  fit ok" << r.ok << "outside" << HarmonicFit::outsideCount(r, parts[0].mesh);
+            const CutInD::Result cr = CutInD::cut(parts[0].mesh, r, a.at(4).toInt(), 7u, 0.4,
+                                                  a.size() > 5 ? a.at(5).toDouble() : 0.0);
+            for (const QString &n : cr.notes) qInfo().noquote() << "CB  " + n;
+            int wOpen = 0;
+            for (const auto &pc : cr.pieces) wOpen += CutInD::openEdgesWelded(pc.mesh);
+            qInfo().noquote() << "CB  open edges by position:" << wOpen;
+            qInfo().noquote() << "CB  ok" << cr.ok << cr.error;
             return 0;
         }
 
